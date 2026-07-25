@@ -1,0 +1,65 @@
+# Dependencies
+node_modules/
+vendor/
+
+# Build outputs
+dist/
+build/
+backend/bootstrap
+backend/function.zip
+*.zip
+
+# Environment files
+.env
+.env.local
+.env.production
+.env.*.local
+backend/.env
+infrastructure/terraform.tfvars
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Test coverage
+coverage/
+*.coverage
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Secrets
+secrets.yaml
+secrets.json
+*.pem
+*.key

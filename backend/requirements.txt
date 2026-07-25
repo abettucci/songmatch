@@ -1,0 +1,49 @@
+# Web Framework
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+mangum>=0.17.0
+
+# Database
+psycopg[binary]>=3.1.0
+sqlalchemy[asyncio]>=2.0.25
+alembic>=1.13.0
+
+# Authentication
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+bcrypt==4.0.1
+python-multipart>=0.0.6
+
+# HTTP Client
+httpx>=0.26.0
+aiohttp>=3.9.0
+
+# Audio Processing
+librosa>=0.10.1
+numpy>=1.26.0
+scipy>=1.12.0
+soundfile>=0.12.1
+
+# Machine Learning
+scikit-learn>=1.4.0
+
+# Deep Learning Audio Embeddings (CLAP)
+# torch must be installed separately for CPU-only (see below):
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+transformers>=4.35.0
+
+# Visualization
+matplotlib>=3.8.0
+
+# Utilities
+pydantic[email]>=2.5.0
+pydantic-settings>=2.1.0
+email-validator>=2.1.0
+python-dotenv>=1.0.0
+
+# AWS
+boto3>=1.34.0
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.23.0
