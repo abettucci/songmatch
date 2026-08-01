@@ -1,10 +1,12 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { ExternalLink, Heart, Save, Sparkles } from 'lucide-react'
+import { ArrowDownAZ, ExternalLink, Heart, Save, Sparkles, Star, TrendingUp } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { apiClient, APIError } from '@/lib/api-client'
+
+type SortKey = 'default' | 'name' | 'popularity' | 'match'
 
 interface Song {
   spotify_id: string
@@ -15,6 +17,8 @@ interface Song {
   album_image?: string
   external_url: string
   popularity?: number
+  match_score?: number
+  similarity_score?: number
 }
 
 interface SongRecommendationsProps {
@@ -25,7 +29,16 @@ interface SongRecommendationsProps {
 export function SongRecommendations({ recommendations, loading }: SongRecommendationsProps) {
   const [likedSongs, setLikedSongs] = useState<Set<string>>(new Set())
   const [saving, setSaving] = useState(false)
+  const [sortBy, setSortBy] = useState<SortKey>('default')
   const { toast } = useToast()
+
+  const sortedRecommendations = useMemo(() => {
+    const list = [...recommendations]
+    if (sortBy === 'name') return list.sort((a, b) => a.name.localeCompare(b.name))
+    if (sortBy === 'popularity') return list.sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0))
+    if (sortBy === 'match') return list.sort((a, b) => (b.match_score ?? b.similarity_score ?? 0) - (a.match_score ?? a.similarity_score ?? 0))
+    return list
+  }, [recommendations, sortBy])
 
   const handleLike = (songId: string) => {
     const newLikedSongs = new Set(likedSongs)
@@ -133,10 +146,30 @@ export function SongRecommendations({ recommendations, loading }: SongRecommenda
             {saving ? 'Saving...' : 'Save Playlist'}
           </Button>
         </div>
+        <div className="flex items-center gap-2 pt-1">
+          <span className="text-xs text-muted-foreground">Sort by:</span>
+          {([
+            { key: 'default',    label: 'Default', icon: <Sparkles className="w-3 h-3" /> },
+            { key: 'name',       label: 'A–Z',     icon: <ArrowDownAZ className="w-3 h-3" /> },
+            { key: 'popularity', label: 'Popular', icon: <TrendingUp className="w-3 h-3" /> },
+            { key: 'match',      label: 'Match %', icon: <Star className="w-3 h-3" /> },
+          ] as { key: SortKey; label: string; icon: React.ReactNode }[]).map(({ key, label, icon }) => (
+            <button
+              key={key}
+              onClick={() => setSortBy(key)}
+              className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-colors
+                ${sortBy === key
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}
+            >
+              {icon}{label}
+            </button>
+          ))}
+        </div>
       </CardHeader>
       <CardContent>
         <div className="space-y-3 max-h-96 overflow-y-auto">
-          {recommendations.map((song) => (
+          {sortedRecommendations.map((song) => (
             <div key={song.spotify_id} className="flex items-center gap-4 p-4 border border-border/30 rounded-lg hover:border-border/60 transition-colors bg-card/30">
               {song.album_image && (
                 <img

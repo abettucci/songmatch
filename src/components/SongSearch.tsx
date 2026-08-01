@@ -121,7 +121,11 @@ export function SongSearch({ onSongSelect, selectedSongs }: SongSearchProps) {
             className={`p-3 hover:bg-accent/50 transition-colors cursor-pointer ${
               isSelected(track.spotify_id) ? 'bg-primary/10 border-primary' : ''
             }`}
-            onClick={() => onSongSelect(track)}
+            onClick={() => {
+              onSongSelect(track);
+              setQuery('');
+              setResults([]);
+            }}
           >
             <div className="flex items-center gap-3">
               {track.album_image ? (
