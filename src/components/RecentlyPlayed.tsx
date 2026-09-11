@@ -21,7 +21,10 @@ export function RecentlyPlayed() {
     let cancelled = false
     setLoading(true)
     apiClient
-      .getSpotifyRecentlyPlayed(20)
+      // 50 = Spotify's own max for this endpoint. Also maximizes how much gets
+      // opportunistically persisted into listening_history on every visit,
+      // which matters until the daily sync cron is actually running.
+      .getSpotifyRecentlyPlayed(50)
       .then((response) => {
         if (!cancelled) setTracks(response.tracks)
       })

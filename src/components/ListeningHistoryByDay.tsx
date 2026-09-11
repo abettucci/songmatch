@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Badge } from '@/components/ui/badge'
-import { CalendarDays } from 'lucide-react'
+import { CalendarDays, ChevronDown } from 'lucide-react'
 import { apiClient, type SpotifyListeningHistoryDay } from '@/lib/api-client'
 import { TrackRow } from '@/components/TrackRow'
 
@@ -14,6 +15,16 @@ function formatDay(dateIso: string): string {
 export function ListeningHistoryByDay() {
   const [days, setDays] = useState<SpotifyListeningHistoryDay[]>([])
   const [loading, setLoading] = useState(true)
+  const [collapsedGenres, setCollapsedGenres] = useState<Set<string>>(new Set())
+
+  const toggleGenre = (key: string) => {
+    setCollapsedGenres((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -90,18 +101,23 @@ export function ListeningHistoryByDay() {
               </AccordionTrigger>
               <AccordionContent>
                 <div className="space-y-4">
-                  {day.genres.map((genre) => (
-                    <div key={genre.name} className="space-y-2">
-                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                        {genre.name} · {genre.tracks.length}
-                      </p>
-                      <div className="space-y-2">
-                        {genre.tracks.map((track, index) => (
-                          <TrackRow key={`${track.spotify_id}-${track.played_at}-${index}`} track={track} />
-                        ))}
-                      </div>
-                    </div>
-                  ))}
+                  {day.genres.map((genre) => {
+                    const genreKey = `${day.date}-${genre.name}`
+                    const isOpen = !collapsedGenres.has(genreKey)
+                    return (
+                      <Collapsible key={genre.name} open={isOpen} onOpenChange={() => toggleGenre(genreKey)}>
+                        <CollapsibleTrigger className="flex w-full items-center justify-between text-xs font-medium text-muted-foreground uppercase tracking-wide hover:text-foreground transition-colors">
+                          <span>{genre.name} · {genre.tracks.length}</span>
+                          <ChevronDown className={`w-3.5 h-3.5 shrink-0 transition-transform ${isOpen ? '' : '-rotate-90'}`} />
+                        </CollapsibleTrigger>
+                        <CollapsibleContent className="space-y-2 pt-2">
+                          {genre.tracks.map((track, index) => (
+                            <TrackRow key={`${track.spotify_id}-${track.played_at}-${index}`} track={track} />
+                          ))}
+                        </CollapsibleContent>
+                      </Collapsible>
+                    )
+                  })}
                 </div>
               </AccordionContent>
             </AccordionItem>
