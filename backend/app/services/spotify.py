@@ -29,6 +29,14 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
+class SpotifyAPIError(Exception):
+    """A safe representation of an unsuccessful Spotify API response."""
+
+    def __init__(self, status_code: int):
+        self.status_code = status_code
+        super().__init__(f"Spotify API request failed with status {status_code}")
+
+
 class SpotifyClient:
     BASE_URL = "https://api.spotify.com/v1"
     AUTH_URL = "https://accounts.spotify.com/api/token"
@@ -298,7 +306,11 @@ class SpotifyClient:
             "response_type": "code",
             "redirect_uri": settings.spotify_redirect_uri,
             "state": state,
-            "scope": "user-top-read user-read-recently-played",
+            "scope": (
+                "user-top-read user-read-recently-played "
+                "playlist-read-private playlist-read-collaborative "
+                "playlist-modify-private"
+            ),
         }
         return self.AUTHORIZE_URL + "?" + urllib.parse.urlencode(params)
 
@@ -385,8 +397,171 @@ class SpotifyClient:
             return []
 
         items = response.json().get("items", [])
-        # recently-played wraps tracks in {"track": {...}, "played_at": ...}
-        return [self._format_track(item["track"]) for item in items if item.get("track")]
+        # recently-played wraps tracks in {"track": {...}, "played_at": ISO8601 string}.
+        # Parse played_at to a real datetime now so it binds correctly wherever it's
+        # inserted later (SQLAlchemy expects a datetime, not a raw string, for a
+        # DateTime column) — pydantic would parse the string fine, but the DB insert
+        # path does not.
+        return [
+            {
+                **self._format_track(item["track"]),
+                "played_at": datetime.fromisoformat(item["played_at"].replace("Z", "+00:00")),
+            }
+            for item in items
+            if item.get("track")
+        ]
+
+    async def _user_request(
+        self,
+        method: str,
+        endpoint: str,
+        access_token: str,
+        *,
+        params: Optional[Dict[str, Any]] = None,
+        json: Optional[Dict[str, Any]] = None,
+        success_codes: tuple[int, ...] = (200,),
+    ) -> Dict[str, Any]:
+        """Call a fixed Spotify endpoint with a connected user's token."""
+        client = await self._get_client()
+        response = await client.request(
+            method,
+            f"{self.BASE_URL}{endpoint}",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params=params,
+            json=json,
+        )
+        if response.status_code not in success_codes:
+            logger.warning("Spotify user API request failed: %s %s", method, response.status_code)
+            raise SpotifyAPIError(response.status_code)
+        return response.json() if response.content else {}
+
+    async def get_playlist_tracks(
+        self, access_token: str, playlist_id: str
+    ) -> tuple[str, List[Dict[str, Any]]]:
+        """Return the playlist name and all playable track items in their original order."""
+        playlist = await self._user_request(
+            "GET", f"/playlists/{playlist_id}", access_token, params={"fields": "name"}
+        )
+        tracks: List[Dict[str, Any]] = []
+        offset = 0
+        while True:
+            page = await self._user_request(
+                "GET",
+                f"/playlists/{playlist_id}/items",
+                access_token,
+                params={"limit": 50, "offset": offset, "additional_types": "track"},
+            )
+            items = page.get("items", [])
+            for entry in items:
+                item = entry.get("item") or entry.get("track")
+                if item and item.get("type") == "track" and item.get("uri"):
+                    tracks.append(item)
+            offset += len(items)
+            if not items or offset >= page.get("total", 0):
+                break
+        return playlist.get("name", "Spotify playlist"), tracks
+
+    async def get_artists_genres(self, artist_ids: List[str]) -> Dict[str, List[str]]:
+        """Fetch genre metadata in Spotify's maximum batch size."""
+        genres_by_artist: Dict[str, List[str]] = {}
+        unique_ids = list(dict.fromkeys(artist_ids))
+        for start in range(0, len(unique_ids), 50):
+            chunk = unique_ids[start:start + 50]
+            data = await self._request("GET", "/artists", params={"ids": ",".join(chunk)})
+            for artist in data.get("artists", []):
+                if artist and artist.get("id"):
+                    genres_by_artist[artist["id"]] = artist.get("genres", [])
+        return genres_by_artist
+
+    async def _genres_by_artist_for_tracks(self, tracks: List[Dict[str, Any]]) -> Dict[str, List[str]]:
+        """Resolve genres for every artist credited across a list of tracks.
+
+        Accepts both raw Spotify track payloads (playlist items) and tracks
+        already run through `_format_track` — both expose `artists: [{"id": ...}]`.
+        """
+        artist_ids = [
+            artist.get("id")
+            for track in tracks
+            for artist in track.get("artists", [])
+            if artist.get("id")
+        ]
+        return await self.get_artists_genres(artist_ids)
+
+    async def genres_for_tracks(self, tracks: List[Dict[str, Any]]) -> Dict[str, List[str]]:
+        """Return each track's own de-duplicated genre list, keyed by spotify_id.
+
+        Used to snapshot genres onto listening_history rows at capture time,
+        so later day/genre grouping never has to call Spotify again.
+        """
+        genres_by_artist = await self._genres_by_artist_for_tracks(tracks)
+        result: Dict[str, List[str]] = {}
+        for track in tracks:
+            track_id = track.get("spotify_id") or track.get("id")
+            if not track_id:
+                continue
+            seen = set()
+            genres: List[str] = []
+            for artist in track.get("artists", []):
+                for genre in genres_by_artist.get(artist.get("id"), []):
+                    display_name = " ".join(genre.split())
+                    key = display_name.casefold()
+                    if not display_name or key in seen:
+                        continue
+                    seen.add(key)
+                    genres.append(display_name)
+            result[track_id] = genres
+        return result
+
+    async def analyze_playlist_genres(
+        self, access_token: str, playlist_id: str
+    ) -> Dict[str, Any]:
+        """Build a genre summary from every artist credited on each playlist track."""
+        playlist_name, tracks = await self.get_playlist_tracks(access_token, playlist_id)
+        genres_by_artist = await self._genres_by_artist_for_tracks(tracks)
+        genre_counts: Dict[str, Dict[str, Any]] = {}
+        for track in tracks:
+            seen_for_track = set()
+            for artist in track.get("artists", []):
+                for genre in genres_by_artist.get(artist.get("id"), []):
+                    display_name = " ".join(genre.split())
+                    key = display_name.casefold()
+                    if not display_name or key in seen_for_track:
+                        continue
+                    seen_for_track.add(key)
+                    entry = genre_counts.setdefault(key, {"name": display_name, "track_count": 0})
+                    entry["track_count"] += 1
+        return {
+            "playlist_name": playlist_name,
+            "tracks": tracks,
+            "genres_by_artist": genres_by_artist,
+            "genres": sorted(
+                genre_counts.values(),
+                key=lambda genre: (-genre["track_count"], genre["name"].casefold()),
+            ),
+        }
+
+    async def create_private_playlist(
+        self, access_token: str, name: str, description: str
+    ) -> Dict[str, Any]:
+        return await self._user_request(
+            "POST",
+            "/me/playlists",
+            access_token,
+            json={"name": name, "description": description, "public": False},
+            success_codes=(201,),
+        )
+
+    async def add_playlist_tracks(
+        self, access_token: str, playlist_id: str, track_uris: List[str]
+    ) -> None:
+        for start in range(0, len(track_uris), 100):
+            await self._user_request(
+                "POST",
+                f"/playlists/{playlist_id}/items",
+                access_token,
+                json={"uris": track_uris[start:start + 100]},
+                success_codes=(201,),
+            )
 
     def _format_track(self, track: Dict[str, Any]) -> Dict[str, Any]:
         if not track:

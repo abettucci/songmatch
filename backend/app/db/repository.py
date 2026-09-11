@@ -1,12 +1,13 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from typing import Optional, List
 from uuid import UUID
 from datetime import datetime
 import logging
 
-from app.db.models import User, Playlist, RecommendationHistory, TrackAudioFeatures
+from app.db.models import User, Playlist, RecommendationHistory, TrackAudioFeatures, ListeningHistory
 from app.core.security import get_password_hash, verify_password
 
 logger = logging.getLogger(__name__)
@@ -71,6 +72,12 @@ class UserRepository:
         await self.session.flush()
         await self.session.refresh(user)
         return user
+
+    async def list_with_spotify_connected(self) -> List[User]:
+        result = await self.session.execute(
+            select(User).where(User.spotify_access_token.isnot(None))
+        )
+        return list(result.scalars().all())
 
 
 class PlaylistRepository:
@@ -174,3 +181,45 @@ class TrackAudioFeaturesRepository:
         await self.session.flush()
         await self.session.refresh(row)
         return row
+
+
+class ListeningHistoryRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def upsert_many(self, user_id: UUID, plays: List[dict]) -> None:
+        """Bulk-insert plays, skipping rows that already exist for this
+        (user_id, spotify_track_id, played_at) — makes re-running the sync
+        job over an overlapping window idempotent instead of duplicating rows."""
+        if not plays:
+            return
+
+        rows = [
+            {
+                "user_id": user_id,
+                "spotify_track_id": play["spotify_id"],
+                "track_name": play["name"],
+                "artist": play["artist"],
+                "album": play.get("album"),
+                "album_image": play.get("album_image"),
+                "external_url": play.get("external_url"),
+                "genres": play.get("genres", []),
+                "played_at": play["played_at"],
+            }
+            for play in plays
+        ]
+
+        stmt = pg_insert(ListeningHistory).values(rows)
+        stmt = stmt.on_conflict_do_nothing(
+            index_elements=["user_id", "spotify_track_id", "played_at"]
+        )
+        await self.session.execute(stmt)
+        await self.session.flush()
+
+    async def get_by_user_since(self, user_id: UUID, since: datetime) -> List[ListeningHistory]:
+        result = await self.session.execute(
+            select(ListeningHistory)
+            .where(ListeningHistory.user_id == user_id, ListeningHistory.played_at >= since)
+            .order_by(ListeningHistory.played_at.desc())
+        )
+        return list(result.scalars().all())

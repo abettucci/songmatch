@@ -65,3 +65,24 @@ class TrackAudioFeatures(Base):
     features = Column(JSON, default=dict)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ListeningHistory(Base):
+    """One row per Spotify play. Table is partitioned by HASH(user_id) — see
+    infrastructure/schema.sql. No relationship() to User: reads always go
+    through ListeningHistoryRepository, scoped by user_id, never via a lazy join.
+    """
+
+    __tablename__ = "listening_history"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, nullable=False)
+    spotify_track_id = Column(String(64), nullable=False)
+    track_name = Column(String(500), nullable=False)
+    artist = Column(String(500), nullable=False)
+    album = Column(String(500), nullable=True)
+    album_image = Column(Text, nullable=True)
+    external_url = Column(Text, nullable=True)
+    genres = Column(ARRAY(Text), default=list)
+    played_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

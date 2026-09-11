@@ -3,12 +3,27 @@ import { useAuth } from '@/hooks/useAuth'
 import { SongSearch } from '@/components/SongSearch'
 import { RecommendationSettings } from '@/components/RecommendationSettings'
 import { SongRecommendations } from '@/components/SongRecommendations'
+import { RecentlyPlayed } from '@/components/RecentlyPlayed'
+import { ListeningHistoryByDay } from '@/components/ListeningHistoryByDay'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { useToast } from '@/hooks/use-toast'
-import { apiClient } from '@/lib/api-client'
-import { LogOut, Music, X, Sparkles, Link, Link2Off } from 'lucide-react'
+import { apiClient, type SpotifyPlaylistGenreCreation, type SpotifyPlaylistGenrePreview } from '@/lib/api-client'
+import { Loader2, LogOut, Music, X, Sparkles, Link, Link2Off, ListMusic } from 'lucide-react'
 
 interface Song {
   spotify_id: string
@@ -59,6 +74,31 @@ interface PreferencesType {
   }
 }
 
+const SPOTIFY_PLAYLIST_ID_PATTERN = /^[A-Za-z0-9]{22}$/
+
+function extractSpotifyPlaylistId(input: string): string | null {
+  const value = input.trim()
+  if (SPOTIFY_PLAYLIST_ID_PATTERN.test(value)) return value
+
+  if (value.startsWith('spotify:playlist:')) {
+    const id = value.slice('spotify:playlist:'.length)
+    return SPOTIFY_PLAYLIST_ID_PATTERN.test(id) ? id : null
+  }
+
+  try {
+    const url = new URL(value)
+    if (url.hostname !== 'open.spotify.com') return null
+    const [, resource, id] = url.pathname.split('/')
+    return resource === 'playlist' && SPOTIFY_PLAYLIST_ID_PATTERN.test(id) ? id : null
+  } catch {
+    return null
+  }
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback
+}
+
 export default function Dashboard() {
   const { user, signOut } = useAuth()
   const { toast } = useToast()
@@ -71,6 +111,12 @@ export default function Dashboard() {
   })
   const [loading, setLoading] = useState(false)
   const [spotifyLoading, setSpotifyLoading] = useState(false)
+  const [playlistInput, setPlaylistInput] = useState('')
+  const [genrePreview, setGenrePreview] = useState<SpotifyPlaylistGenrePreview | null>(null)
+  const [selectedGenre, setSelectedGenre] = useState('')
+  const [genreLoading, setGenreLoading] = useState(false)
+  const [confirmGenrePlaylist, setConfirmGenrePlaylist] = useState(false)
+  const [createdGenrePlaylist, setCreatedGenrePlaylist] = useState<SpotifyPlaylistGenreCreation | null>(null)
 
   const handleSongSelect = (song: Song) => {
     if (selectedSongs.length >= 5) {
@@ -188,6 +234,69 @@ export default function Dashboard() {
       })
     } finally {
       setSpotifyLoading(false)
+    }
+  }
+
+  const handlePreviewPlaylistGenres = async () => {
+    const playlistId = extractSpotifyPlaylistId(playlistInput)
+    if (!playlistId) {
+      toast({
+        title: 'Invalid playlist link',
+        description: 'Paste a Spotify playlist link, URI, or its 22-character ID.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    setGenreLoading(true)
+    setGenrePreview(null)
+    setSelectedGenre('')
+    setCreatedGenrePlaylist(null)
+    try {
+      const preview = await apiClient.previewSpotifyPlaylistGenres(playlistId)
+      setGenrePreview(preview)
+      if (preview.genres.length === 0) {
+        toast({
+          title: 'No genre metadata found',
+          description: 'Spotify did not return genres for the artists in this playlist.',
+          variant: 'destructive',
+        })
+      }
+    } catch (error: unknown) {
+      toast({
+        title: 'Could not analyze playlist',
+        description: getErrorMessage(error, 'Please reconnect Spotify and try again.'),
+        variant: 'destructive',
+      })
+    } finally {
+      setGenreLoading(false)
+    }
+  }
+
+  const handleCreateGenrePlaylist = async () => {
+    if (!genrePreview || !selectedGenre) return
+
+    setGenreLoading(true)
+    try {
+      const created = await apiClient.createSpotifyGenrePlaylist(
+        genrePreview.playlist_id,
+        selectedGenre,
+        genrePreview.confirmation_token,
+      )
+      setCreatedGenrePlaylist(created)
+      setConfirmGenrePlaylist(false)
+      toast({
+        title: 'Playlist created in Spotify',
+        description: `${created.track_count} ${created.genre} tracks were added.`,
+      })
+    } catch (error: unknown) {
+      toast({
+        title: 'Could not create playlist',
+        description: getErrorMessage(error, 'Please try again.'),
+        variant: 'destructive',
+      })
+    } finally {
+      setGenreLoading(false)
     }
   }
 
@@ -324,14 +433,112 @@ export default function Dashboard() {
             )}
 
             {/* Recommendations */}
-            <SongRecommendations 
+            <SongRecommendations
               recommendations={recommendations}
               loading={loading}
             />
+
+            {user?.spotify_connected && (
+              <>
+                <RecentlyPlayed />
+                <ListeningHistoryByDay />
+              </>
+            )}
           </div>
 
           {/* Right Column - Settings */}
           <div className="space-y-6">
+            <Card className="border border-border/50 bg-card/50 backdrop-blur-sm">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <ListMusic className="h-5 w-5 text-green-400" />
+                  Organize a Spotify playlist
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  Analyze the genres of every credited artist, then create a new private playlist for one genre.
+                </p>
+                {!user?.spotify_connected ? (
+                  <Button onClick={handleConnectSpotify} disabled={spotifyLoading} className="w-full gap-2">
+                    <Link className="h-4 w-4" />
+                    Connect Spotify first
+                  </Button>
+                ) : (
+                  <>
+                    <div className="space-y-2">
+                      <Label htmlFor="spotify-playlist">Playlist link or ID</Label>
+                      <Input
+                        id="spotify-playlist"
+                        value={playlistInput}
+                        onChange={(event) => setPlaylistInput(event.target.value)}
+                        placeholder="https://open.spotify.com/playlist/..."
+                        autoComplete="off"
+                      />
+                    </div>
+                    <Button
+                      onClick={handlePreviewPlaylistGenres}
+                      disabled={genreLoading || !playlistInput.trim()}
+                      className="w-full"
+                    >
+                      {genreLoading && !genrePreview ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ListMusic className="mr-2 h-4 w-4" />}
+                      Analyze genres
+                    </Button>
+                    <Button
+                      variant="link"
+                      size="sm"
+                      onClick={handleConnectSpotify}
+                      disabled={spotifyLoading}
+                      className="h-auto w-full p-0 text-green-400"
+                    >
+                      Reconnect Spotify to grant playlist permissions
+                    </Button>
+
+                    {genrePreview && (
+                      <div className="space-y-3 rounded-lg border border-border/50 bg-background/40 p-3">
+                        <div>
+                          <p className="font-medium leading-tight">{genrePreview.playlist_name}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {genrePreview.total_tracks} tracks · {genrePreview.genres.length} genres found
+                          </p>
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="genre-select">Genre to export</Label>
+                          <Select value={selectedGenre} onValueChange={setSelectedGenre}>
+                            <SelectTrigger id="genre-select">
+                              <SelectValue placeholder="Choose a genre" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {genrePreview.genres.map((genre) => (
+                                <SelectItem key={genre.name} value={genre.name}>
+                                  {genre.name} ({genre.track_count})
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <Button
+                          onClick={() => setConfirmGenrePlaylist(true)}
+                          disabled={!selectedGenre || genreLoading}
+                          className="w-full bg-green-600 hover:bg-green-700"
+                        >
+                          Create private playlist
+                        </Button>
+                      </div>
+                    )}
+
+                    {createdGenrePlaylist?.playlist_url && (
+                      <Button asChild variant="outline" className="w-full">
+                        <a href={createdGenrePlaylist.playlist_url} target="_blank" rel="noreferrer">
+                          Open {createdGenrePlaylist.playlist_name}
+                        </a>
+                      </Button>
+                    )}
+                  </>
+                )}
+              </CardContent>
+            </Card>
+
             <RecommendationSettings 
               preferences={preferences}
               onPreferencesChange={setPreferences}
@@ -339,6 +546,26 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      <AlertDialog open={confirmGenrePlaylist} onOpenChange={setConfirmGenrePlaylist}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Create a Spotify playlist?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {genrePreview && selectedGenre
+                ? `SoundMatch will create a new private playlist containing the ${selectedGenre} tracks from ${genrePreview.playlist_name}. Your source playlist will not be changed.`
+                : 'Your source playlist will not be changed.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={genreLoading}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleCreateGenrePlaylist} disabled={genreLoading}>
+              {genreLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Confirm and create
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

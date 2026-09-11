@@ -10,6 +10,7 @@ This application implements a comprehensive music recommendation system with mul
 2. **Custom Algorithm** - Audio features analysis using Spotify API and librosa
 3. **Audio Analysis Algorithm** - Deep audio feature extraction using librosa (tempo, energy, MFCCs, etc.)
 4. **Structural Analysis Algorithm** - Advanced pattern recognition using Self-Similarity Matrices, Novelty Detection, and Hierarchical Clustering
+5. **Spotify Playlist Organizer** - Creates a new private playlist containing the tracks that match a selected artist genre, after a preview and explicit confirmation
 
 ### Structural Analysis (Based on Academic Research)
 

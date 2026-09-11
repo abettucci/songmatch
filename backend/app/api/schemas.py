@@ -9,7 +9,7 @@ Key fixes vs previous version:
 - AudioFeaturesRequest uses preview_urls (librosa-based, not Spotify deprecated endpoint)
 """
 
-from pydantic import BaseModel, EmailStr, Field, ConfigDict
+from pydantic import BaseModel, EmailStr, Field, ConfigDict, field_validator
 from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime
 from uuid import UUID
@@ -241,3 +241,83 @@ class SpotifyAuthUrlResponse(BaseModel):
 
 class SpotifyTopTracksResponse(BaseModel):
     tracks: List[TrackResponse]
+
+
+# ──────────────────────────────────────────────────────
+# Spotify recently played / listening history
+# ──────────────────────────────────────────────────────
+
+class TrackWithPlayedAt(TrackResponse):
+    played_at: datetime
+
+
+class SpotifyRecentlyPlayedResponse(BaseModel):
+    tracks: List[TrackWithPlayedAt]
+
+
+class SpotifyListeningHistoryGenreGroup(BaseModel):
+    name: str
+    tracks: List[TrackWithPlayedAt]
+
+
+class SpotifyListeningHistoryDay(BaseModel):
+    date: str  # ISO calendar date (UTC), e.g. "2026-09-11"
+    genres: List[SpotifyListeningHistoryGenreGroup]
+    total_tracks: int = Field(ge=0)
+
+
+class SpotifyListeningHistoryResponse(BaseModel):
+    days: List[SpotifyListeningHistoryDay]
+
+
+# ──────────────────────────────────────────────────────
+# Spotify playlist genre organizer
+# ──────────────────────────────────────────────────────
+
+SPOTIFY_PLAYLIST_ID_PATTERN = r"^[A-Za-z0-9]{22}$"
+
+
+class SpotifyPlaylistGenreRequest(BaseModel):
+    """A Spotify playlist identifier, never an arbitrary URL."""
+
+    playlist_id: str = Field(
+        ...,
+        min_length=22,
+        max_length=22,
+        pattern=SPOTIFY_PLAYLIST_ID_PATTERN,
+    )
+
+
+class SpotifyPlaylistGenreCreateRequest(SpotifyPlaylistGenreRequest):
+    genre: str = Field(..., min_length=1, max_length=100)
+    confirmation_token: str = Field(..., min_length=32, max_length=512)
+
+    @field_validator("genre")
+    @classmethod
+    def normalize_genre(cls, value: str) -> str:
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("genre must not be blank")
+        return normalized
+
+
+class SpotifyGenreSummary(BaseModel):
+    name: str
+    track_count: int = Field(ge=1)
+
+
+class SpotifyPlaylistGenrePreviewResponse(BaseModel):
+    playlist_id: str
+    playlist_name: str
+    total_tracks: int = Field(ge=0)
+    categorized_tracks: int = Field(ge=0)
+    genres: List[SpotifyGenreSummary]
+    confirmation_token: str
+
+
+class SpotifyPlaylistGenreCreateResponse(BaseModel):
+    playlist_id: str
+    playlist_name: str
+    playlist_url: str
+    genre: str
+    track_count: int = Field(ge=1)

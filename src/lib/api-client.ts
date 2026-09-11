@@ -9,6 +9,49 @@ class APIError extends Error {
   }
 }
 
+export interface SpotifyPlaylistGenre {
+  name: string;
+  track_count: number;
+}
+
+export interface SpotifyPlaylistGenrePreview {
+  playlist_id: string;
+  playlist_name: string;
+  total_tracks: number;
+  categorized_tracks: number;
+  genres: SpotifyPlaylistGenre[];
+  confirmation_token: string;
+}
+
+export interface SpotifyPlaylistGenreCreation {
+  playlist_id: string;
+  playlist_name: string;
+  playlist_url: string;
+  genre: string;
+  track_count: number;
+}
+
+export interface SpotifyTrackPlayed {
+  spotify_id: string;
+  name: string;
+  artist: string;
+  album?: string;
+  album_image?: string;
+  external_url?: string;
+  played_at: string;
+}
+
+export interface SpotifyListeningHistoryGenreGroup {
+  name: string;
+  tracks: SpotifyTrackPlayed[];
+}
+
+export interface SpotifyListeningHistoryDay {
+  date: string;
+  genres: SpotifyListeningHistoryGenreGroup[];
+  total_tracks: number;
+}
+
 class APIClient {
   private baseURL: string;
   private token: string | null = null;
@@ -165,6 +208,42 @@ class APIClient {
     });
   }
 
+  async previewSpotifyPlaylistGenres(playlistId: string): Promise<SpotifyPlaylistGenrePreview> {
+    return this.request<SpotifyPlaylistGenrePreview>('/api/v1/spotify/playlist-genres/preview', {
+      method: 'POST',
+      body: JSON.stringify({ playlist_id: playlistId }),
+    });
+  }
+
+  async createSpotifyGenrePlaylist(
+    playlistId: string,
+    genre: string,
+    confirmationToken: string,
+  ): Promise<SpotifyPlaylistGenreCreation> {
+    return this.request<SpotifyPlaylistGenreCreation>('/api/v1/spotify/playlist-genres/create', {
+      method: 'POST',
+      body: JSON.stringify({
+        playlist_id: playlistId,
+        genre,
+        confirmation_token: confirmationToken,
+      }),
+    });
+  }
+
+  async getSpotifyRecentlyPlayed(limit: number = 20): Promise<{ tracks: SpotifyTrackPlayed[] }> {
+    return this.request<{ tracks: SpotifyTrackPlayed[] }>(
+      `/api/v1/spotify/recently-played?limit=${limit}`,
+      { method: 'GET' },
+    );
+  }
+
+  async getSpotifyListeningHistory(days: number = 7): Promise<{ days: SpotifyListeningHistoryDay[] }> {
+    return this.request<{ days: SpotifyListeningHistoryDay[] }>(
+      `/api/v1/spotify/listening-history?days=${days}`,
+      { method: 'GET' },
+    );
+  }
+
   // Health check
   async healthCheck() {
     return this.request<{ status: string }>('/health', { method: 'GET' });
@@ -174,4 +253,3 @@ class APIClient {
 // Export singleton instance
 export const apiClient = new APIClient(API_URL);
 export { APIError };
-

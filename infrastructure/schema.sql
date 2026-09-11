@@ -102,9 +102,46 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS spotify_access_token TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS spotify_refresh_token TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS spotify_token_expires_at TIMESTAMP WITH TIME ZONE;
 
+-- Listening history: persisted Spotify "recently played" events, one row per play.
+-- Partitioned by HASH(user_id) so per-user reads only ever scan one partition.
+-- Populated by the daily sync job (app/jobs/sync_recently_played.py) and,
+-- opportunistically, by the live /recently-played endpoint.
+CREATE TABLE IF NOT EXISTS listening_history (
+    id UUID DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    spotify_track_id VARCHAR(64) NOT NULL,
+    track_name VARCHAR(500) NOT NULL,
+    artist VARCHAR(500) NOT NULL,
+    album VARCHAR(500),
+    album_image TEXT,
+    external_url TEXT,
+    genres TEXT[] NOT NULL DEFAULT '{}',
+    played_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    PRIMARY KEY (user_id, id)
+) PARTITION BY HASH (user_id);
+
+CREATE TABLE IF NOT EXISTS listening_history_p0 PARTITION OF listening_history FOR VALUES WITH (MODULUS 8, REMAINDER 0);
+CREATE TABLE IF NOT EXISTS listening_history_p1 PARTITION OF listening_history FOR VALUES WITH (MODULUS 8, REMAINDER 1);
+CREATE TABLE IF NOT EXISTS listening_history_p2 PARTITION OF listening_history FOR VALUES WITH (MODULUS 8, REMAINDER 2);
+CREATE TABLE IF NOT EXISTS listening_history_p3 PARTITION OF listening_history FOR VALUES WITH (MODULUS 8, REMAINDER 3);
+CREATE TABLE IF NOT EXISTS listening_history_p4 PARTITION OF listening_history FOR VALUES WITH (MODULUS 8, REMAINDER 4);
+CREATE TABLE IF NOT EXISTS listening_history_p5 PARTITION OF listening_history FOR VALUES WITH (MODULUS 8, REMAINDER 5);
+CREATE TABLE IF NOT EXISTS listening_history_p6 PARTITION OF listening_history FOR VALUES WITH (MODULUS 8, REMAINDER 6);
+CREATE TABLE IF NOT EXISTS listening_history_p7 PARTITION OF listening_history FOR VALUES WITH (MODULUS 8, REMAINDER 7);
+
+-- Dedup key: reused by the sync job's ON CONFLICT DO NOTHING upsert so re-running
+-- the job over an overlapping window never creates duplicate plays.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_listening_history_dedup
+    ON listening_history (user_id, spotify_track_id, played_at);
+-- Serves "last N days for this user" reads (partition pruning + range scan on played_at).
+CREATE INDEX IF NOT EXISTS idx_listening_history_user_played_at
+    ON listening_history (user_id, played_at DESC);
+
 -- Comments for documentation
 COMMENT ON TABLE users IS 'User accounts';
 COMMENT ON TABLE auth_tokens IS 'Authentication tokens for API access';
 COMMENT ON TABLE playlists IS 'User-created playlists';
 COMMENT ON TABLE recommendation_history IS 'History of recommendation requests and results';
 COMMENT ON TABLE track_audio_features IS 'Cached audio feature payloads by Spotify track ID';
+COMMENT ON TABLE listening_history IS 'Per-user Spotify play history, partitioned by user_id, populated by the daily sync job';
