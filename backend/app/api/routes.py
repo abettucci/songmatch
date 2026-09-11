@@ -236,7 +236,10 @@ async def spotify_callback(
     db: AsyncSession = Depends(get_db),
 ):
     """Spotify redirects here after user authorizes. Stores tokens and redirects to frontend."""
-    frontend_url = f"{settings.frontend_url}/dashboard"
+    # "/dashboard" doesn't exist as a route (App.tsx only defines "/" and "/auth");
+    # useAuth.tsx reads ?spotify=connected from window.location.search regardless
+    # of path, so redirecting to "/" (the actual dashboard route) works the same.
+    frontend_url = settings.frontend_url
 
     if error or not code or not state:
         return RedirectResponse(url=f"{frontend_url}?spotify=error")
