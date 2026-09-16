@@ -14,12 +14,27 @@ export interface SpotifyPlaylistGenre {
   track_count: number;
 }
 
+export interface SpotifyPlaylistGenreTrack {
+  spotify_id: string;
+  name: string;
+  artist: string;
+  album?: string;
+  album_image?: string;
+  external_url?: string;
+}
+
+export interface SpotifyPlaylistGenreTrackGroup extends SpotifyPlaylistGenre {
+  tracks: SpotifyPlaylistGenreTrack[];
+}
+
 export interface SpotifyPlaylistGenrePreview {
   playlist_id: string;
   playlist_name: string;
   total_tracks: number;
   categorized_tracks: number;
+  tracks: SpotifyPlaylistGenreTrack[];
   genres: SpotifyPlaylistGenre[];
+  genre_tracks: SpotifyPlaylistGenreTrackGroup[];
   confirmation_token: string;
 }
 

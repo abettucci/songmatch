@@ -306,12 +306,24 @@ class SpotifyGenreSummary(BaseModel):
     track_count: int = Field(ge=1)
 
 
+class SpotifyPlaylistGenreTrackGroup(SpotifyGenreSummary):
+    """Tracks from the source playlist that belong to this genre.
+
+    A track can appear in more than one group because Spotify genres are
+    artist-level metadata rather than a single exclusive track category.
+    """
+
+    tracks: List[TrackResponse]
+
+
 class SpotifyPlaylistGenrePreviewResponse(BaseModel):
     playlist_id: str
     playlist_name: str
     total_tracks: int = Field(ge=0)
     categorized_tracks: int = Field(ge=0)
+    tracks: List[TrackResponse]
     genres: List[SpotifyGenreSummary]
+    genre_tracks: List[SpotifyPlaylistGenreTrackGroup]
     confirmation_token: str
 
 

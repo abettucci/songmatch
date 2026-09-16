@@ -55,3 +55,8 @@ async def test_analyze_playlist_genres_deduplicates_collaborator_genres_and_pres
         {"name": "pop", "track_count": 2},
         {"name": "electropop", "track_count": 1},
     ]
+    assert [(group["name"], len(group["tracks"])) for group in result["genre_tracks"]] == [
+        ("indie pop", 2),
+        ("pop", 2),
+        ("electropop", 1),
+    ]

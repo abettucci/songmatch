@@ -22,8 +22,8 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { useToast } from '@/hooks/use-toast'
-import { apiClient, type SpotifyPlaylistGenreCreation, type SpotifyPlaylistGenrePreview } from '@/lib/api-client'
-import { Loader2, LogOut, Music, X, Sparkles, Link, Link2Off, ListMusic } from 'lucide-react'
+import { apiClient, type SpotifyPlaylistGenreCreation, type SpotifyPlaylistGenrePreview, type SpotifyPlaylistGenreTrack } from '@/lib/api-client'
+import { Loader2, LogOut, Music, X, Sparkles, Link, Link2Off, ListMusic, ChevronDown, ExternalLink } from 'lucide-react'
 
 interface Song {
   spotify_id: string
@@ -97,6 +97,15 @@ function extractSpotifyPlaylistId(input: string): string | null {
 
 function getErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback
+}
+
+function representativeTrackIds(tracks: SpotifyPlaylistGenreTrack[], maximum = 5): string[] {
+  const uniqueIds = [...new Set(tracks.map((track) => track.spotify_id).filter(Boolean))]
+  if (uniqueIds.length <= maximum) return uniqueIds
+
+  // Spread the seeds through the source order so long playlists do not only
+  // represent their first few songs.
+  return Array.from({ length: maximum }, (_, index) => uniqueIds[Math.floor(index * uniqueIds.length / maximum)])
 }
 
 export default function Dashboard() {
@@ -300,6 +309,41 @@ export default function Dashboard() {
     }
   }
 
+  const handlePlaylistRecommendations = async (tracks: SpotifyPlaylistGenreTrack[], source: string) => {
+    const seedTracks = representativeTrackIds(tracks)
+    if (seedTracks.length === 0) {
+      toast({
+        title: 'No songs available',
+        description: 'This category does not have playable Spotify tracks to use as seeds.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    setLoading(true)
+    try {
+      const result = await apiClient.getRecommendations({
+        seed_tracks: seedTracks,
+        algorithm: preferences.algorithm || 'lastfm',
+        limit: 10,
+        filters: preferences.use_filters !== false ? preferences : null,
+      })
+      setRecommendations(result.recommendations || [])
+      toast({
+        title: 'Recommendations ready',
+        description: `${result.recommendations?.length || 0} songs inspired by ${source}.`,
+      })
+    } catch (error: unknown) {
+      toast({
+        title: 'Could not generate recommendations',
+        description: getErrorMessage(error, 'Please try again.'),
+        variant: 'destructive',
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary/10 via-secondary/10 to-accent/10">
       {/* Header */}
@@ -499,8 +543,55 @@ export default function Dashboard() {
                         <div>
                           <p className="font-medium leading-tight">{genrePreview.playlist_name}</p>
                           <p className="mt-1 text-xs text-muted-foreground">
-                            {genrePreview.total_tracks} tracks · {genrePreview.genres.length} genres found
+                            {genrePreview.total_tracks} tracks · {genrePreview.genres.length} genres found · Review every category before creating a playlist.
                           </p>
+                        </div>
+                        <Button
+                          variant="outline"
+                          onClick={() => handlePlaylistRecommendations(
+                            genrePreview.tracks,
+                            `the style of ${genrePreview.playlist_name}`,
+                          )}
+                          disabled={loading || genreLoading || genrePreview.tracks.length === 0}
+                          className="w-full"
+                        >
+                          {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
+                          Recommend from playlist style
+                        </Button>
+                        <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
+                          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Songs in each category</p>
+                          {genrePreview.genre_tracks.map((group) => (
+                            <details key={group.name} className="group rounded-md border border-border/45 bg-card/40">
+                              <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-sm font-medium marker:hidden">
+                                <span className="truncate">{group.name} <span className="text-muted-foreground">({group.track_count})</span></span>
+                                <ChevronDown className="h-4 w-4 shrink-0 transition-transform group-open:rotate-180" />
+                              </summary>
+                              <div className="space-y-2 border-t border-border/35 px-3 py-2">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 w-full justify-start px-0 text-xs text-primary hover:text-primary"
+                                  onClick={() => handlePlaylistRecommendations(group.tracks, `the ${group.name} group`)}
+                                  disabled={loading || genreLoading || group.tracks.length === 0}
+                                >
+                                  <Sparkles className="mr-1.5 h-3.5 w-3.5" />
+                                  Recommend from this genre
+                                </Button>
+                                <ul className="space-y-1.5">
+                                  {group.tracks.map((track) => (
+                                    <li key={track.spotify_id} className="flex items-center justify-between gap-2 text-xs">
+                                      <span className="min-w-0 truncate"><span className="font-medium">{track.name}</span><span className="text-muted-foreground"> · {track.artist}</span></span>
+                                      {track.external_url && (
+                                        <a href={track.external_url} target="_blank" rel="noreferrer" aria-label={`Open ${track.name} in Spotify`} className="text-muted-foreground hover:text-primary">
+                                          <ExternalLink className="h-3.5 w-3.5" />
+                                        </a>
+                                      )}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            </details>
+                          ))}
                         </div>
                         <div className="space-y-2">
                           <Label htmlFor="genre-select">Genre to export</Label>
@@ -524,6 +615,20 @@ export default function Dashboard() {
                         >
                           Create private playlist
                         </Button>
+                        {selectedGenre && (
+                          <Button
+                            variant="secondary"
+                            onClick={() => {
+                              const group = genrePreview.genre_tracks.find((item) => item.name === selectedGenre)
+                              if (group) handlePlaylistRecommendations(group.tracks, `the ${selectedGenre} group`)
+                            }}
+                            disabled={loading || genreLoading}
+                            className="w-full"
+                          >
+                            <Sparkles className="mr-2 h-4 w-4" />
+                            Recommend from selected genre
+                          </Button>
+                        )}
                       </div>
                     )}
 

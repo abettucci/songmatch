@@ -519,6 +519,7 @@ class SpotifyClient:
         playlist_name, tracks = await self.get_playlist_tracks(access_token, playlist_id)
         genres_by_artist = await self._genres_by_artist_for_tracks(tracks)
         genre_counts: Dict[str, Dict[str, Any]] = {}
+        tracks_by_genre: Dict[str, List[Dict[str, Any]]] = {}
         for track in tracks:
             seen_for_track = set()
             for artist in track.get("artists", []):
@@ -530,14 +531,24 @@ class SpotifyClient:
                     seen_for_track.add(key)
                     entry = genre_counts.setdefault(key, {"name": display_name, "track_count": 0})
                     entry["track_count"] += 1
+                    tracks_by_genre.setdefault(key, []).append(track)
+        genres = sorted(
+            genre_counts.values(),
+            key=lambda genre: (-genre["track_count"], genre["name"].casefold()),
+        )
         return {
             "playlist_name": playlist_name,
             "tracks": tracks,
             "genres_by_artist": genres_by_artist,
-            "genres": sorted(
-                genre_counts.values(),
-                key=lambda genre: (-genre["track_count"], genre["name"].casefold()),
-            ),
+            "genres": genres,
+            "genre_tracks": [
+                {
+                    "name": genre["name"],
+                    "track_count": genre["track_count"],
+                    "tracks": tracks_by_genre.get(genre["name"].casefold(), []),
+                }
+                for genre in genres
+            ],
         }
 
     async def create_private_playlist(

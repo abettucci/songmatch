@@ -49,6 +49,7 @@ from app.api.schemas import (
     SpotifyAuthUrlResponse, SpotifyTopTracksResponse,
     SpotifyPlaylistGenreRequest, SpotifyPlaylistGenreCreateRequest,
     SpotifyPlaylistGenrePreviewResponse, SpotifyPlaylistGenreCreateResponse,
+    SpotifyPlaylistGenreTrackGroup,
     TrackWithPlayedAt, SpotifyRecentlyPlayedResponse,
     SpotifyListeningHistoryGenreGroup, SpotifyListeningHistoryDay,
     SpotifyListeningHistoryResponse,
@@ -425,7 +426,16 @@ async def preview_spotify_playlist_genres(
                 for artist in track.get("artists", [])
             )
         ),
+        tracks=[TrackResponse.model_validate(spotify_client._format_track(track)) for track in analysis["tracks"]],
         genres=analysis["genres"],
+        genre_tracks=[
+            SpotifyPlaylistGenreTrackGroup(
+                name=group["name"],
+                track_count=group["track_count"],
+                tracks=[TrackResponse.model_validate(spotify_client._format_track(track)) for track in group["tracks"]],
+            )
+            for group in analysis["genre_tracks"]
+        ],
         confirmation_token=_build_playlist_genre_confirmation_token(user_id, request.playlist_id),
     )
 
