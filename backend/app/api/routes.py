@@ -51,6 +51,7 @@ from app.api.schemas import (
     SpotifyPlaylistGenrePreviewResponse, SpotifyPlaylistGenreCreateResponse,
     SpotifyPlaylistGenreTrackGroup,
     TrackWithPlayedAt, SpotifyRecentlyPlayedResponse,
+    TrackWithAddedAt, SpotifyLikedTracksGenreGroup, SpotifyLikedTracksResponse,
     SpotifyListeningHistoryGenreGroup, SpotifyListeningHistoryDay,
     SpotifyListeningHistoryResponse,
 )
@@ -343,6 +344,38 @@ async def spotify_recently_played(
     return SpotifyRecentlyPlayedResponse(tracks=[TrackWithPlayedAt(**p) for p in plays])
 
 
+@router.get("/api/v1/spotify/liked-tracks", response_model=SpotifyLikedTracksResponse)
+async def spotify_liked_tracks(
+    limit: int = Query(20, ge=1, le=50),
+    user_id: str = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """Read the latest liked songs and organize them as an in-app playlist.
+
+    Each song belongs to its first available artist genre, so genre sections
+    are mutually exclusive and still add up to the requested track total.
+    """
+    access_token = await _get_spotify_access_token_for_user(user_id, db)
+    try:
+        tracks = await spotify_client.get_user_saved_tracks(access_token, limit=limit)
+    except SpotifyAPIError as error:
+        raise _spotify_error_to_http(error)
+
+    genres_by_track = await spotify_client.genres_for_tracks(tracks)
+    groups: Dict[str, List[TrackWithAddedAt]] = {}
+    for track in tracks:
+        genre = (genres_by_track.get(track["spotify_id"]) or ["Sin género"])[0]
+        groups.setdefault(genre, []).append(TrackWithAddedAt(**track))
+
+    return SpotifyLikedTracksResponse(
+        tracks=[TrackWithAddedAt(**track) for track in tracks],
+        genres=[
+            SpotifyLikedTracksGenreGroup(name=name, tracks=group_tracks)
+            for name, group_tracks in sorted(groups.items(), key=lambda item: (-len(item[1]), item[0].casefold()))
+        ],
+    )
+
+
 @router.get("/api/v1/spotify/listening-history", response_model=SpotifyListeningHistoryResponse)
 async def spotify_listening_history(
     days: int = Query(7, ge=1, le=30),
@@ -391,7 +424,7 @@ def _spotify_error_to_http(error: SpotifyAPIError) -> HTTPException:
     if error.status_code in (401, 403):
         return HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Spotify denied access to this playlist. Reconnect Spotify and grant playlist permissions.",
+            detail="Spotify denied access. Reconnect Spotify to grant the required permissions.",
         )
     if error.status_code == 429:
         return HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Spotify is busy. Try again shortly.")

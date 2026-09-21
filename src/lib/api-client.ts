@@ -56,6 +56,15 @@ export interface SpotifyTrackPlayed {
   played_at: string;
 }
 
+export interface SpotifyTrackLiked extends Omit<SpotifyTrackPlayed, 'played_at'> {
+  added_at: string;
+}
+
+export interface SpotifyLikedTracksGenreGroup {
+  name: string;
+  tracks: SpotifyTrackLiked[];
+}
+
 export interface SpotifyListeningHistoryGenreGroup {
   name: string;
   tracks: SpotifyTrackPlayed[];
@@ -248,6 +257,13 @@ class APIClient {
   async getSpotifyRecentlyPlayed(limit: number = 20): Promise<{ tracks: SpotifyTrackPlayed[] }> {
     return this.request<{ tracks: SpotifyTrackPlayed[] }>(
       `/api/v1/spotify/recently-played?limit=${limit}`,
+      { method: 'GET' },
+    );
+  }
+
+  async getSpotifyLikedTracks(limit: number = 20): Promise<{ tracks: SpotifyTrackLiked[]; genres: SpotifyLikedTracksGenreGroup[] }> {
+    return this.request<{ tracks: SpotifyTrackLiked[]; genres: SpotifyLikedTracksGenreGroup[] }>(
+      `/api/v1/spotify/liked-tracks?limit=${limit}`,
       { method: 'GET' },
     );
   }

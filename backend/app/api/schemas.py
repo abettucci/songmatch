@@ -255,6 +255,20 @@ class SpotifyRecentlyPlayedResponse(BaseModel):
     tracks: List[TrackWithPlayedAt]
 
 
+class TrackWithAddedAt(TrackResponse):
+    added_at: datetime
+
+
+class SpotifyLikedTracksGenreGroup(BaseModel):
+    name: str
+    tracks: List[TrackWithAddedAt]
+
+
+class SpotifyLikedTracksResponse(BaseModel):
+    tracks: List[TrackWithAddedAt]
+    genres: List[SpotifyLikedTracksGenreGroup]
+
+
 class SpotifyListeningHistoryGenreGroup(BaseModel):
     name: str
     tracks: List[TrackWithPlayedAt]

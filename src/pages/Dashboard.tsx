@@ -5,6 +5,7 @@ import { RecommendationSettings } from '@/components/RecommendationSettings'
 import { SongRecommendations } from '@/components/SongRecommendations'
 import { RecentlyPlayed } from '@/components/RecentlyPlayed'
 import { ListeningHistoryByDay } from '@/components/ListeningHistoryByDay'
+import { LikedTracksPlaylist } from '@/components/LikedTracksPlaylist'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -484,6 +485,7 @@ export default function Dashboard() {
 
             {user?.spotify_connected && (
               <>
+                <LikedTracksPlaylist />
                 <RecentlyPlayed />
                 <ListeningHistoryByDay />
               </>

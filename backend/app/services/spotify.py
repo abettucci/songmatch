@@ -307,7 +307,7 @@ class SpotifyClient:
             "redirect_uri": settings.spotify_redirect_uri,
             "state": state,
             "scope": (
-                "user-top-read user-read-recently-played "
+                "user-top-read user-read-recently-played user-library-read "
                 "playlist-read-private playlist-read-collaborative "
                 "playlist-modify-private"
             ),
@@ -409,6 +409,33 @@ class SpotifyClient:
             }
             for item in items
             if item.get("track")
+        ]
+
+    async def get_user_saved_tracks(
+        self, access_token: str, limit: int = 20
+    ) -> List[Dict[str, Any]]:
+        """Return the user's most recently saved tracks, newest first.
+
+        This is deliberately a read-only call: SoundMatch presents the result
+        as an in-app playlist and never creates or changes a Spotify playlist.
+        """
+        client = await self._get_client()
+        response = await client.get(
+            f"{self.BASE_URL}/me/tracks",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params={"limit": min(limit, 50), "offset": 0},
+        )
+        if response.status_code != 200:
+            logger.warning("get_user_saved_tracks failed: %s", response.status_code)
+            raise SpotifyAPIError(response.status_code)
+
+        return [
+            {
+                **self._format_track(item["track"]),
+                "added_at": datetime.fromisoformat(item["added_at"].replace("Z", "+00:00")),
+            }
+            for item in response.json().get("items", [])
+            if item.get("track") and item["track"].get("id") and item.get("added_at")
         ]
 
     async def _user_request(
