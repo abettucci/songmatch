@@ -1,5 +1,5 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, or_, and_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from typing import Optional, List
@@ -7,7 +7,11 @@ from uuid import UUID
 from datetime import datetime
 import logging
 
-from app.db.models import User, Playlist, RecommendationHistory, TrackAudioFeatures, ListeningHistory
+from app.db.models import (
+    User, Playlist, RecommendationHistory, TrackAudioFeatures, ListeningHistory,
+    UserProfile, Concert, ConcertAttendanceIntent, CompanionSwipe, CompanionMatch,
+    UserBlock, UserReport,
+)
 from app.core.security import get_password_hash, verify_password
 
 logger = logging.getLogger(__name__)
@@ -223,3 +227,147 @@ class ListeningHistoryRepository:
             .order_by(ListeningHistory.played_at.desc())
         )
         return list(result.scalars().all())
+
+
+class CompanionRepository:
+    """All social reads are scoped to the acting user before reaching routes."""
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def get_profile(self, user_id: UUID) -> Optional[UserProfile]:
+        return (await self.session.execute(select(UserProfile).where(UserProfile.user_id == user_id))).scalar_one_or_none()
+
+    async def upsert_profile(self, user_id: UUID, **values) -> UserProfile:
+        profile = await self.get_profile(user_id)
+        if profile is None:
+            profile = UserProfile(user_id=user_id, **values)
+            self.session.add(profile)
+        else:
+            for key, value in values.items():
+                setattr(profile, key, value)
+        await self.session.flush()
+        await self.session.refresh(profile)
+        return profile
+
+    async def create_concert(self, user_id: UUID, **values) -> Concert:
+        concert = Concert(created_by_user_id=user_id, **values)
+        self.session.add(concert)
+        await self.session.flush()
+        await self.session.refresh(concert)
+        return concert
+
+    async def get_concert(self, concert_id: UUID) -> Optional[Concert]:
+        return (await self.session.execute(select(Concert).where(Concert.id == concert_id))).scalar_one_or_none()
+
+    async def list_concerts(self, user_id: UUID) -> list[tuple[Concert, bool]]:
+        result = await self.session.execute(
+            select(Concert, ConcertAttendanceIntent.status)
+            .outerjoin(ConcertAttendanceIntent, and_(ConcertAttendanceIntent.concert_id == Concert.id, ConcertAttendanceIntent.user_id == user_id))
+            .order_by(Concert.starts_at.asc())
+        )
+        return [(concert, status == "active") for concert, status in result.all()]
+
+    async def set_attendance(self, user_id: UUID, concert_id: UUID, status: str) -> ConcertAttendanceIntent:
+        intent = (await self.session.execute(select(ConcertAttendanceIntent).where(
+            ConcertAttendanceIntent.user_id == user_id, ConcertAttendanceIntent.concert_id == concert_id,
+        ))).scalar_one_or_none()
+        if intent is None:
+            intent = ConcertAttendanceIntent(user_id=user_id, concert_id=concert_id, status=status)
+            self.session.add(intent)
+        else:
+            intent.status = status
+        await self.session.flush()
+        await self.session.refresh(intent)
+        return intent
+
+    async def is_active_attendee(self, user_id: UUID, concert_id: UUID) -> bool:
+        result = await self.session.execute(select(ConcertAttendanceIntent.id).where(
+            ConcertAttendanceIntent.user_id == user_id,
+            ConcertAttendanceIntent.concert_id == concert_id,
+            ConcertAttendanceIntent.status == "active",
+        ))
+        return result.scalar_one_or_none() is not None
+
+    async def active_candidate_profiles(self, user_id: UUID, concert_id: UUID) -> list[UserProfile]:
+        blocked_by_me = select(UserBlock.id).where(UserBlock.blocker_user_id == user_id, UserBlock.blocked_user_id == UserProfile.user_id).exists()
+        blocked_me = select(UserBlock.id).where(UserBlock.blocker_user_id == UserProfile.user_id, UserBlock.blocked_user_id == user_id).exists()
+        already_seen = select(CompanionSwipe.id).where(
+            CompanionSwipe.actor_user_id == user_id,
+            CompanionSwipe.target_user_id == UserProfile.user_id,
+            CompanionSwipe.concert_id == concert_id,
+        ).exists()
+        result = await self.session.execute(
+            select(UserProfile)
+            .join(ConcertAttendanceIntent, ConcertAttendanceIntent.user_id == UserProfile.user_id)
+            .where(
+                ConcertAttendanceIntent.concert_id == concert_id,
+                ConcertAttendanceIntent.status == "active",
+                UserProfile.user_id != user_id,
+                UserProfile.visible.is_(True),
+                UserProfile.adult_confirmed.is_(True),
+                UserProfile.music_affinity_consent.is_(True),
+                ~blocked_by_me, ~blocked_me, ~already_seen,
+            )
+        )
+        return list(result.scalars().all())
+
+    async def get_history_genres(self, user_id: UUID, since: datetime) -> list[tuple[str, datetime]]:
+        rows = await self.session.execute(select(ListeningHistory.genres, ListeningHistory.played_at).where(
+            ListeningHistory.user_id == user_id, ListeningHistory.played_at >= since,
+        ))
+        return [(genre, played_at) for genres, played_at in rows.all() for genre in (genres or [])]
+
+    async def swipe_and_match(self, user_id: UUID, target_user_id: UUID, concert_id: UUID, action: str) -> Optional[CompanionMatch]:
+        swipe = (await self.session.execute(select(CompanionSwipe).where(
+            CompanionSwipe.actor_user_id == user_id, CompanionSwipe.target_user_id == target_user_id,
+            CompanionSwipe.concert_id == concert_id,
+        ))).scalar_one_or_none()
+        if swipe is None:
+            swipe = CompanionSwipe(actor_user_id=user_id, target_user_id=target_user_id, concert_id=concert_id, action=action)
+            self.session.add(swipe)
+        else:
+            swipe.action = action
+        await self.session.flush()
+        if action != "interested":
+            return None
+        reciprocal = (await self.session.execute(select(CompanionSwipe.id).where(
+            CompanionSwipe.actor_user_id == target_user_id, CompanionSwipe.target_user_id == user_id,
+            CompanionSwipe.concert_id == concert_id, CompanionSwipe.action == "interested",
+        ))).scalar_one_or_none()
+        if reciprocal is None:
+            return None
+        low_id, high_id = sorted((user_id, target_user_id), key=str)
+        match = (await self.session.execute(select(CompanionMatch).where(
+            CompanionMatch.concert_id == concert_id, CompanionMatch.user_low_id == low_id, CompanionMatch.user_high_id == high_id,
+        ))).scalar_one_or_none()
+        if match is None:
+            match = CompanionMatch(concert_id=concert_id, user_low_id=low_id, user_high_id=high_id)
+            self.session.add(match)
+            await self.session.flush()
+        return match
+
+    async def list_matches(self, user_id: UUID) -> list[tuple[CompanionMatch, Concert, UserProfile]]:
+        result = await self.session.execute(
+            select(CompanionMatch, Concert, UserProfile)
+            .join(Concert, Concert.id == CompanionMatch.concert_id)
+            .join(UserProfile, or_(
+                and_(CompanionMatch.user_low_id == user_id, UserProfile.user_id == CompanionMatch.user_high_id),
+                and_(CompanionMatch.user_high_id == user_id, UserProfile.user_id == CompanionMatch.user_low_id),
+            ))
+            .where(or_(CompanionMatch.user_low_id == user_id, CompanionMatch.user_high_id == user_id))
+            .order_by(CompanionMatch.created_at.desc())
+        )
+        return list(result.all())
+
+    async def block(self, user_id: UUID, target_user_id: UUID) -> None:
+        existing = (await self.session.execute(select(UserBlock.id).where(
+            UserBlock.blocker_user_id == user_id, UserBlock.blocked_user_id == target_user_id,
+        ))).scalar_one_or_none()
+        if existing is None:
+            self.session.add(UserBlock(blocker_user_id=user_id, blocked_user_id=target_user_id))
+            await self.session.flush()
+
+    async def report(self, user_id: UUID, target_user_id: UUID, reason: str, note: str) -> None:
+        self.session.add(UserReport(reporter_user_id=user_id, reported_user_id=target_user_id, reason=reason, note=note))
+        await self.session.flush()

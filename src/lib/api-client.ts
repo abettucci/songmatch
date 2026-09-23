@@ -76,6 +76,45 @@ export interface SpotifyListeningHistoryDay {
   total_tracks: number;
 }
 
+export interface CompanionProfile {
+  user_id: string;
+  display_name: string;
+  bio: string;
+  city: string;
+  public_interests: string[];
+  visible: boolean;
+  music_affinity_consent: boolean;
+  adult_confirmed: boolean;
+}
+
+export interface CompanionConcert {
+  id: string;
+  artist: string;
+  venue: string;
+  city: string;
+  starts_at: string;
+  status: 'scheduled' | 'cancelled' | 'completed';
+  attending: boolean;
+}
+
+export interface CompanionCandidate {
+  user_id: string;
+  display_name: string;
+  bio: string;
+  city: string;
+  public_interests: string[];
+  affinity_score: number;
+  affinity_level: 'alto' | 'medio' | 'bajo';
+  affinity_reasons: string[];
+}
+
+export interface CompanionMatch {
+  id: string;
+  concert: CompanionConcert;
+  companion: CompanionCandidate;
+  created_at: string;
+}
+
 class APIClient {
   private baseURL: string;
   private token: string | null = null;
@@ -273,6 +312,46 @@ class APIClient {
       `/api/v1/spotify/listening-history?days=${days}`,
       { method: 'GET' },
     );
+  }
+
+  async getCompanionProfile(): Promise<CompanionProfile> {
+    return this.request<CompanionProfile>('/api/v1/companions/profile', { method: 'GET' });
+  }
+
+  async saveCompanionProfile(profile: Omit<CompanionProfile, 'user_id'>): Promise<CompanionProfile> {
+    return this.request<CompanionProfile>('/api/v1/companions/profile', { method: 'PUT', body: JSON.stringify(profile) });
+  }
+
+  async getCompanionConcerts(): Promise<CompanionConcert[]> {
+    return this.request<CompanionConcert[]>('/api/v1/companions/concerts', { method: 'GET' });
+  }
+
+  async createCompanionConcert(concert: Omit<CompanionConcert, 'id' | 'attending'>): Promise<CompanionConcert> {
+    return this.request<CompanionConcert>('/api/v1/companions/concerts', { method: 'POST', body: JSON.stringify(concert) });
+  }
+
+  async setCompanionAttendance(concertId: string, status: 'active' | 'withdrawn'): Promise<void> {
+    await this.request(`/api/v1/companions/concerts/${concertId}/attendance`, { method: 'POST', body: JSON.stringify({ status }) });
+  }
+
+  async getCompanionCandidates(concertId: string): Promise<{ concert: CompanionConcert; candidates: CompanionCandidate[] }> {
+    return this.request(`/api/v1/companions/concerts/${concertId}/candidates`, { method: 'GET' });
+  }
+
+  async swipeCompanion(concertId: string, targetUserId: string, action: 'pass' | 'interested'): Promise<{ matched: boolean; match_id?: string }> {
+    return this.request(`/api/v1/companions/concerts/${concertId}/swipes`, { method: 'POST', body: JSON.stringify({ target_user_id: targetUserId, action }) });
+  }
+
+  async getCompanionMatches(): Promise<{ matches: CompanionMatch[] }> {
+    return this.request('/api/v1/companions/matches', { method: 'GET' });
+  }
+
+  async blockCompanion(userId: string): Promise<void> {
+    await this.request('/api/v1/companions/blocks', { method: 'POST', body: JSON.stringify({ user_id: userId }) });
+  }
+
+  async reportCompanion(userId: string, reason: 'safety' | 'harassment' | 'spam' | 'other', note = ''): Promise<void> {
+    await this.request('/api/v1/companions/reports', { method: 'POST', body: JSON.stringify({ user_id: userId, reason, note }) });
   }
 
   // Health check

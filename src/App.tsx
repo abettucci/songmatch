@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import Dashboard from "./pages/Dashboard";
 import Auth from "./pages/Auth";
+import Companions from "./pages/Companions";
 import { Loader2 } from "lucide-react";
 
 const App = () => {
@@ -25,6 +26,7 @@ const App = () => {
         path="/auth" 
         element={!user ? <Auth /> : <Navigate to="/" replace />} 
       />
+      <Route path="/companions" element={user ? <Companions /> : <Navigate to="/auth" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

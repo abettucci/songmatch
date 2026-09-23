@@ -25,6 +25,7 @@ import {
 import { useToast } from '@/hooks/use-toast'
 import { apiClient, type SpotifyPlaylistGenreCreation, type SpotifyPlaylistGenrePreview, type SpotifyPlaylistGenreTrack } from '@/lib/api-client'
 import { Loader2, LogOut, Music, X, Sparkles, Link, Link2Off, ListMusic, ChevronDown, ExternalLink } from 'lucide-react'
+import { Link as RouterLink } from 'react-router-dom'
 
 interface Song {
   spotify_id: string
@@ -412,6 +413,9 @@ export default function Dashboard() {
               >
                 <LogOut className="w-4 h-4 mr-2" />
                 Sign Out
+              </Button>
+              <Button asChild variant="outline" size="sm" className="hidden md:inline-flex border-rose-400/40 text-rose-500 hover:bg-rose-500/10">
+                <RouterLink to="/companions">Busco segunda</RouterLink>
               </Button>
             </div>
           </div>

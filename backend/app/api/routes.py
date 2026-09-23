@@ -27,12 +27,13 @@ from app.db.repository import (
     PlaylistRepository,
     RecommendationHistoryRepository,
     TrackAudioFeaturesRepository,
-    ListeningHistoryRepository,
+    ListeningHistoryRepository, CompanionRepository,
 )
 from app.core.security import create_access_token, require_auth, get_current_user_id
 from app.core.config import get_settings
 from app.services.spotify import SpotifyAPIError, spotify_client
 from app.services.spotify_tokens import get_valid_access_token
+from app.services.companions import music_affinity_service
 from app.services.recommendations import recommendation_engine
 from app.services.audio_analysis import audio_analyzer
 from app.services.audio_features import audio_extractor
@@ -54,12 +55,45 @@ from app.api.schemas import (
     TrackWithAddedAt, SpotifyLikedTracksGenreGroup, SpotifyLikedTracksResponse,
     SpotifyListeningHistoryGenreGroup, SpotifyListeningHistoryDay,
     SpotifyListeningHistoryResponse,
+    CompanionProfileUpsert, CompanionProfileResponse, ConcertCreate, ConcertResponse,
+    AttendanceIntentRequest, CompanionCandidatesResponse, CompanionCandidateResponse,
+    CompanionSwipeRequest, CompanionSwipeResponse, CompanionMatchesResponse,
+    CompanionMatchResponse, UserBlockRequest, UserReportRequest,
 )
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
 router = APIRouter()
+
+
+def _profile_response(profile) -> CompanionProfileResponse:
+    return CompanionProfileResponse(
+        user_id=profile.user_id,
+        display_name=profile.display_name,
+        bio=profile.bio,
+        city=profile.city,
+        public_interests=profile.public_interests or [],
+        visible=profile.visible,
+        music_affinity_consent=profile.music_affinity_consent,
+        adult_confirmed=profile.adult_confirmed,
+    )
+
+
+def _concert_response(concert, attending: bool = False) -> ConcertResponse:
+    return ConcertResponse(
+        id=concert.id, artist=concert.artist, venue=concert.venue, city=concert.city,
+        starts_at=concert.starts_at, status=concert.status, attending=attending,
+    )
+
+
+async def _require_companion_profile(repo: CompanionRepository, user_id: UUID):
+    profile = await repo.get_profile(UUID(user_id))
+    if not profile:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Create your companion profile first")
+    if not profile.adult_confirmed:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Adult confirmation is required")
+    return profile
 
 
 # ──────────────────────────────────────────────────────
@@ -158,6 +192,139 @@ async def get_current_user(
 async def logout():
     """Logout (client should discard the JWT)."""
     return MessageResponse(message="Logged out successfully")
+
+
+# ──────────────────────────────────────────────────────
+# Concert companions (all data is opt-in and profile-safe)
+# ──────────────────────────────────────────────────────
+
+@router.get("/api/v1/companions/profile", response_model=CompanionProfileResponse)
+async def get_companion_profile(user_id: str = Depends(require_auth), db: AsyncSession = Depends(get_db)):
+    profile = await CompanionRepository(db).get_profile(UUID(user_id))
+    if not profile:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Companion profile not found")
+    return _profile_response(profile)
+
+
+@router.put("/api/v1/companions/profile", response_model=CompanionProfileResponse)
+async def upsert_companion_profile(
+    request: CompanionProfileUpsert, user_id: str = Depends(require_auth), db: AsyncSession = Depends(get_db),
+):
+    profile = await CompanionRepository(db).upsert_profile(UUID(user_id), **request.model_dump())
+    return _profile_response(profile)
+
+
+@router.get("/api/v1/companions/concerts", response_model=List[ConcertResponse])
+async def list_companion_concerts(user_id: str = Depends(require_auth), db: AsyncSession = Depends(get_db)):
+    concerts = await CompanionRepository(db).list_concerts(UUID(user_id))
+    return [_concert_response(concert, attending) for concert, attending in concerts]
+
+
+@router.post("/api/v1/companions/concerts", response_model=ConcertResponse, status_code=status.HTTP_201_CREATED)
+async def create_companion_concert(
+    request: ConcertCreate, user_id: str = Depends(require_auth), db: AsyncSession = Depends(get_db),
+):
+    concert = await CompanionRepository(db).create_concert(UUID(user_id), **request.model_dump())
+    return _concert_response(concert)
+
+
+@router.post("/api/v1/companions/concerts/{concert_id}/attendance", response_model=MessageResponse)
+async def set_companion_attendance(
+    concert_id: UUID, request: AttendanceIntentRequest, user_id: str = Depends(require_auth), db: AsyncSession = Depends(get_db),
+):
+    repo = CompanionRepository(db)
+    await _require_companion_profile(repo, user_id)
+    if not await repo.get_concert(concert_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Concert not found")
+    await repo.set_attendance(UUID(user_id), concert_id, request.status)
+    return MessageResponse(message="Estás buscando compañía" if request.status == "active" else "Ya no buscás compañía para este recital")
+
+
+@router.get("/api/v1/companions/concerts/{concert_id}/candidates", response_model=CompanionCandidatesResponse)
+async def list_companion_candidates(concert_id: UUID, user_id: str = Depends(require_auth), db: AsyncSession = Depends(get_db)):
+    repo = CompanionRepository(db)
+    profile = await _require_companion_profile(repo, user_id)
+    concert = await repo.get_concert(concert_id)
+    if not concert:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Concert not found")
+    if not await repo.is_active_attendee(UUID(user_id), concert_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Join this concert before discovering companions")
+    candidates = []
+    history_since = datetime.now(timezone.utc) - timedelta(days=90)
+    own_history = await repo.get_history_genres(UUID(user_id), history_since) if profile.music_affinity_consent else []
+    for candidate in await repo.active_candidate_profiles(UUID(user_id), concert_id):
+        candidate_history = await repo.get_history_genres(candidate.user_id, history_since)
+        affinity = music_affinity_service.score(
+            profile.public_interests or [], candidate.public_interests or [],
+            own_history=own_history, candidate_history=candidate_history,
+            use_history=profile.music_affinity_consent and candidate.music_affinity_consent,
+        )
+        if affinity.score >= 20:
+            candidates.append(CompanionCandidateResponse(
+                user_id=candidate.user_id, display_name=candidate.display_name, bio=candidate.bio,
+                city=candidate.city, public_interests=candidate.public_interests or [],
+                affinity_score=affinity.score, affinity_level=affinity.level, affinity_reasons=affinity.reasons,
+            ))
+    candidates.sort(key=lambda item: (-item.affinity_score, item.display_name.casefold()))
+    return CompanionCandidatesResponse(concert=_concert_response(concert, True), candidates=candidates)
+
+
+@router.post("/api/v1/companions/concerts/{concert_id}/swipes", response_model=CompanionSwipeResponse)
+async def swipe_companion(
+    concert_id: UUID, request: CompanionSwipeRequest, user_id: str = Depends(require_auth), db: AsyncSession = Depends(get_db),
+):
+    actor_id = UUID(user_id)
+    if request.target_user_id == actor_id:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="You cannot swipe yourself")
+    repo = CompanionRepository(db)
+    await _require_companion_profile(repo, user_id)
+    if not await repo.get_concert(concert_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Concert not found")
+    if not await repo.is_active_attendee(actor_id, concert_id) or not await repo.is_active_attendee(request.target_user_id, concert_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Companion is not available for this concert")
+    match = await repo.swipe_and_match(actor_id, request.target_user_id, concert_id, request.action)
+    return CompanionSwipeResponse(matched=match is not None, match_id=match.id if match else None)
+
+
+@router.get("/api/v1/companions/matches", response_model=CompanionMatchesResponse)
+async def list_companion_matches(user_id: str = Depends(require_auth), db: AsyncSession = Depends(get_db)):
+    repo = CompanionRepository(db)
+    own_profile = await _require_companion_profile(repo, user_id)
+    matches = []
+    for match, concert, profile in await repo.list_matches(UUID(user_id)):
+        affinity = music_affinity_service.score(own_profile.public_interests or [], profile.public_interests or [])
+        matches.append(CompanionMatchResponse(
+            id=match.id, concert=_concert_response(concert), created_at=match.created_at,
+            companion=CompanionCandidateResponse(
+                user_id=profile.user_id, display_name=profile.display_name, bio=profile.bio, city=profile.city,
+                public_interests=profile.public_interests or [], affinity_score=affinity.score,
+                affinity_level=affinity.level, affinity_reasons=[],
+            ),
+        ))
+    return CompanionMatchesResponse(matches=matches)
+
+
+@router.post("/api/v1/companions/blocks", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
+async def block_companion(request: UserBlockRequest, user_id: str = Depends(require_auth), db: AsyncSession = Depends(get_db)):
+    actor_id = UUID(user_id)
+    if request.user_id == actor_id:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="You cannot block yourself")
+    repo = CompanionRepository(db)
+    if not await UserRepository(db).get_by_id(request.user_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")
+    await repo.block(actor_id, request.user_id)
+    return MessageResponse(message="Perfil bloqueado")
+
+
+@router.post("/api/v1/companions/reports", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
+async def report_companion(request: UserReportRequest, user_id: str = Depends(require_auth), db: AsyncSession = Depends(get_db)):
+    actor_id = UUID(user_id)
+    if request.user_id == actor_id:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="You cannot report yourself")
+    if not await UserRepository(db).get_by_id(request.user_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")
+    await CompanionRepository(db).report(actor_id, request.user_id, request.reason, request.note)
+    return MessageResponse(message="Reporte recibido")
 
 
 # ──────────────────────────────────────────────────────

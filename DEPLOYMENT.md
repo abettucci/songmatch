@@ -1,375 +1,104 @@
-# 🚀 Deployment Guide
+# Despliegue: Vercel + Supabase + Lambda
 
-Complete step-by-step guide to deploy SoundMatch to production.
+Esta es la configuración de producción soportada por el repositorio. El frontend ya se publica en **Vercel**; no se usa Netlify. La API FastAPI corre en AWS Lambda con API Gateway y la base PostgreSQL administrada está en **Supabase**. No se crean recursos RDS, VPC ni NAT Gateway.
 
-## Prerequisites Checklist
+```
+Navegador → Vercel (React) → API Gateway → Lambda (FastAPI) → Supabase Postgres
+```
 
-- [ ] AWS Account with CLI configured
-- [ ] Spotify Developer Account ([Get one here](https://developer.spotify.com/dashboard))
-- [ ] Last.fm API Account ([Get one here](https://www.last.fm/api/account/create))
-- [ ] PostgreSQL Database (Neon recommended for free tier)
-- [ ] Netlify Account (for frontend hosting)
-- [ ] GitHub repository (for CI/CD)
+## Antes de empezar
 
-## 🗄️ Step 1: Database Setup
+- Una cuenta y proyecto en Supabase.
+- El repositorio vinculado al proyecto existente de Vercel.
+- Una cuenta AWS configurada solo para Lambda, API Gateway y CloudWatch.
+- Credenciales de Spotify y Last.fm.
+- `psql`, Terraform y Python 3.11 disponibles localmente.
 
-### Option A: Neon (Recommended - Free Tier)
+Nunca copies credenciales a `VITE_*`, al repositorio, ni a logs públicos. `VITE_API_URL` es pública; `DATABASE_URL` no lo es.
 
-1. Go to [https://neon.tech](https://neon.tech)
-2. Sign up and create a new project
-3. Select region closest to your users
-4. Copy the connection string (looks like: `postgresql://user:pass@host.neon.tech/database`)
-5. Run the schema:
+## 1. Crear la base en Supabase
+
+1. Crea un proyecto PostgreSQL en Supabase.
+2. En **Connect**, copia la URL de **Transaction pooler** y agrega `?sslmode=require` si no viene incluida. Es la adecuada para Lambda porque evita acumular conexiones en cada cold start.
+3. Para una base nueva, aplica el esquema completo:
 
 ```bash
-psql "your_connection_string" -f infrastructure/schema.sql
+psql "$DATABASE_URL" -f infrastructure/schema.sql
 ```
 
-### Option B: Railway
-
-1. Go to [https://railway.app](https://railway.app)
-2. Create a new PostgreSQL database
-3. Copy the connection string
-4. Run the schema (same as above)
-
-### Option C: AWS RDS
-
-1. Create PostgreSQL instance in AWS Console
-2. Configure security group to allow Lambda access
-3. Copy connection details
-4. Run schema
-
-## 🔑 Step 2: Get API Keys
-
-### Spotify API
-
-1. Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
-2. Create a new app
-3. Copy **Client ID** and **Client Secret**
-4. Add redirect URIs if needed (not required for backend-only)
-
-### Last.fm API
-
-1. Go to [Last.fm API](https://www.last.fm/api/account/create)
-2. Create an API account
-3. Copy the **API Key**
-
-## ⚙️ Step 3: Configure Secrets
-
-### GitHub Secrets (for CI/CD)
-
-Go to your GitHub repository → Settings → Secrets and variables → Actions
-
-Add the following secrets:
-
-```
-AWS_ACCESS_KEY_ID=your_aws_access_key
-AWS_SECRET_ACCESS_KEY=your_aws_secret_key
-SPOTIFY_CLIENT_ID=your_spotify_client_id
-SPOTIFY_CLIENT_SECRET=your_spotify_client_secret
-LASTFM_API_KEY=your_lastfm_api_key
-DATABASE_URL=postgresql://user:pass@host:5432/database
-NETLIFY_AUTH_TOKEN=your_netlify_token
-NETLIFY_SITE_ID=your_netlify_site_id
-```
-
-### Get Netlify Tokens
+4. Para una instalación que ya tiene el esquema anterior, aplica únicamente cada archivo nuevo de `infrastructure/migrations/`, en orden. Por ejemplo:
 
 ```bash
-# Install Netlify CLI
-npm install -g netlify-cli
-
-# Login and get token
-netlify login
-netlify sites:create --name soundmatch
-
-# Get site ID
-netlify status
+psql "$DATABASE_URL" -f infrastructure/migrations/20260922_add_concert_companions.sql
 ```
 
-## 🏗️ Step 4: Deploy Backend
+Guarda la URL solamente en el gestor de secretos de AWS/GitHub o en `infrastructure/terraform.tfvars`, archivo que está ignorado por Git.
 
-### Manual Deployment
+## 2. Configurar la API
+
+Construye un ZIP de Lambda desde el backend Python:
 
 ```bash
-# 1. Build the Lambda function
 cd backend
 make build
+```
 
-# 2. Configure Terraform variables
+Luego crea el archivo local de variables de Terraform:
+
+```bash
 cd ../infrastructure
 cp terraform.tfvars.example terraform.tfvars
+```
 
-# Edit terraform.tfvars with your values
-nano terraform.tfvars
+Completa estos valores reales:
 
-# 3. Initialize Terraform
+- `database_url`: URL del Transaction pooler de Supabase.
+- `jwt_secret_key`: valor aleatorio largo, distinto por ambiente.
+- `frontend_url`: URL de producción de Vercel, por ejemplo `https://songmatch.vercel.app`.
+- `cors_origins`: esa misma URL; agrega dominios adicionales separados por comas solo si son necesarios.
+- `spotify_redirect_uri`: URL de callback de la API Gateway. Regístrala exactamente igual en Spotify Developer Dashboard.
+
+Despliega tras revisar el plan:
+
+```bash
 terraform init
-
-# 4. Create a plan
 terraform plan
-
-# 5. Apply (create resources)
 terraform apply
-
-# 6. Save the API endpoint
-terraform output api_endpoint
+terraform output -raw api_endpoint
 ```
 
-### Automatic Deployment (GitHub Actions)
+La infraestructura actual no adjunta la función a una VPC, precisamente para que alcance Supabase sin un NAT Gateway. Si ya tenías el Terraform antiguo aplicado, revisá cuidadosamente el `terraform plan`: eliminará los recursos RDS/VPC gestionados por ese estado. Hacé un backup antes y confirmá que la aplicación ya apunta a Supabase.
 
-Simply push to main branch:
+El estado remoto de Terraform se mantiene en el bucket S3 que ya usaba el proyecto; es necesario para que el plan conozca esos recursos existentes. Si ese bucket nunca se creó, configurá primero un backend de estado remoto propio o inicializá Terraform de acuerdo con las prácticas de tu cuenta AWS.
+
+## 3. Configurar Vercel
+
+En el proyecto de Vercel, configurá esta variable para **Production** y volvé a desplegar:
+
+```text
+VITE_API_URL=https://tu-api.execute-api.us-east-1.amazonaws.com
+```
+
+Vercel construye el frontend desde Git. El workflow de GitHub dejó de desplegar a Netlify y solo verifica que el build sea válido. Para evitar errores CORS, la URL de Vercel debe coincidir con `FRONTEND_URL` y estar incluida en `CORS_ORIGINS` de Lambda.
+
+Los previews de Vercel tienen dominios variables. Para probar autenticación en uno, agregá explícitamente su origen a `cors_origins` y aplicá Terraform de nuevo; no abras CORS a `*`.
+
+## 4. Verificación
 
 ```bash
-git add .
-git commit -m "Initial deployment"
-git push origin main
+curl -f "https://tu-api.execute-api.us-east-1.amazonaws.com/"
 ```
 
-GitHub Actions will automatically:
-1. Run tests
-2. Build the Go binary
-3. Deploy to AWS Lambda via Terraform
-4. Output the API endpoint
+Después abrí el dominio de Vercel, registrá un usuario y probá una búsqueda. Si falla la conexión de datos, verificá que `DATABASE_URL` use SSL y que el esquema haya sido aplicado.
 
-## 🎨 Step 5: Deploy Frontend
+## Operación y costos
 
-### Configure Frontend
+- Vercel aloja solamente assets del frontend.
+- Supabase Free es apropiado para desarrollo/MVP, no para una garantía de disponibilidad: el proyecto puede pausarse por inactividad y su capacidad es limitada. Antes de habilitar usuarios reales, definí backups y el plan de subida.
+- Lambda/API Gateway/CloudWatch siguen siendo recursos AWS facturables fuera de sus cuotas gratuitas. No hay costo de RDS, VPC ni NAT Gateway con esta configuración.
+
+Para hacer un backup lógico:
 
 ```bash
-# Get your API endpoint from Terraform
-API_ENDPOINT=$(cd infrastructure && terraform output -raw api_endpoint)
-
-# Create production env file
-echo "VITE_API_URL=$API_ENDPOINT" > .env.production
+pg_dump "$DATABASE_URL" > songmatch_backup.sql
 ```
-
-### Manual Deployment
-
-```bash
-# Build
-npm run build
-
-# Deploy to Netlify
-netlify deploy --prod --dir=dist
-```
-
-### Automatic Deployment
-
-Push to main branch (if GitHub Actions is configured):
-
-```bash
-git add .
-git commit -m "Deploy frontend"
-git push origin main
-```
-
-## ✅ Step 6: Verify Deployment
-
-### Test Backend
-
-```bash
-# Health check
-curl https://your-api-endpoint.execute-api.us-east-1.amazonaws.com/health
-
-# Should return: {"status":"ok"}
-
-# Test search (no auth required)
-curl -X POST https://your-api-endpoint/api/v1/search \
-  -H "Content-Type: application/json" \
-  -d '{"query":"Beatles","limit":5}'
-```
-
-### Test Frontend
-
-1. Open your Netlify URL
-2. Register a new account
-3. Search for songs
-4. Get recommendations
-
-## 🔧 Troubleshooting
-
-### Backend Issues
-
-**Lambda timeout:**
-```bash
-# Increase timeout in infrastructure/main.tf
-timeout = 60  # Changed from 30
-```
-
-**Database connection failed:**
-```bash
-# Check security group allows Lambda access
-# Verify DATABASE_URL format
-# Test connection locally first
-psql $DATABASE_URL -c "SELECT 1;"
-```
-
-**Spotify API errors:**
-```bash
-# Verify credentials
-curl -X POST https://accounts.spotify.com/api/token \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "grant_type=client_credentials" \
-  -u "$SPOTIFY_CLIENT_ID:$SPOTIFY_CLIENT_SECRET"
-```
-
-### Frontend Issues
-
-**Can't connect to API:**
-```bash
-# Verify VITE_API_URL in .env.production
-# Check CORS settings in backend
-# Verify API Gateway is publicly accessible
-```
-
-**Build failures:**
-```bash
-# Clear cache
-rm -rf node_modules dist
-npm install
-npm run build
-```
-
-## 📊 Monitoring Setup
-
-### CloudWatch Alarms
-
-```bash
-# Create alarm for Lambda errors
-aws cloudwatch put-metric-alarm \
-  --alarm-name soundmatch-lambda-errors \
-  --alarm-description "Alert on Lambda errors" \
-  --metric-name Errors \
-  --namespace AWS/Lambda \
-  --statistic Sum \
-  --period 300 \
-  --evaluation-periods 1 \
-  --threshold 10 \
-  --comparison-operator GreaterThanThreshold \
-  --dimensions Name=FunctionName,Value=soundmatch-api-prod
-```
-
-### View Logs
-
-```bash
-# Lambda logs
-aws logs tail /aws/lambda/soundmatch-api-prod --follow
-
-# API Gateway logs
-aws logs tail /aws/apigateway/soundmatch-prod --follow
-```
-
-## 🔄 Updates and Rollbacks
-
-### Update Backend
-
-```bash
-cd backend
-make build
-
-cd ../infrastructure
-terraform apply
-```
-
-### Rollback Backend
-
-```bash
-cd infrastructure
-
-# View previous states
-terraform state list
-
-# Rollback to previous version
-# (You'll need to rebuild the old version first)
-terraform apply
-```
-
-### Update Frontend
-
-```bash
-npm run build
-netlify deploy --prod --dir=dist
-```
-
-## 💾 Backup and Recovery
-
-### Database Backups
-
-```bash
-# Manual backup
-pg_dump $DATABASE_URL > backup_$(date +%Y%m%d).sql
-
-# Restore
-psql $DATABASE_URL < backup_20240101.sql
-```
-
-### Automated Backups (Neon)
-
-Neon automatically creates daily backups. Go to your Neon dashboard to manage them.
-
-## 🔒 Security Checklist
-
-- [ ] Environment variables are in Secrets, not in code
-- [ ] Database has strong password
-- [ ] API Gateway has rate limiting enabled
-- [ ] CORS is properly configured
-- [ ] HTTPS is enforced
-- [ ] Database requires SSL connection
-- [ ] Lambda has minimal IAM permissions
-- [ ] CloudWatch logs retention is set
-- [ ] No API keys in frontend code
-
-## 📈 Scaling Considerations
-
-### When to Scale
-
-- Lambda concurrency > 80%
-- Database connections > 80% of max
-- Response time > 1 second
-- Error rate > 1%
-
-### Scaling Options
-
-1. **Lambda**: Auto-scales, increase memory if needed
-2. **Database**: Upgrade Neon tier or move to RDS
-3. **API Gateway**: Auto-scales, no action needed
-4. **Frontend**: Netlify auto-scales
-
-## 💰 Cost Optimization
-
-### Monitor Costs
-
-```bash
-# Get current month costs
-aws ce get-cost-and-usage \
-  --time-period Start=2024-01-01,End=2024-02-01 \
-  --granularity MONTHLY \
-  --metrics BlendedCost \
-  --group-by Type=SERVICE
-```
-
-### Optimization Tips
-
-1. Set Lambda memory to minimum required (start with 512MB)
-2. Set CloudWatch log retention to 7 days
-3. Use Neon free tier for < 10k users
-4. Enable Lambda function caching
-5. Use CDN for frontend assets (Netlify does this automatically)
-
-## 🎉 Done!
-
-Your SoundMatch application is now deployed and running in production!
-
-**Next Steps:**
-- Set up monitoring and alerts
-- Configure custom domain
-- Set up SSL certificate (automatic with Netlify)
-- Add analytics
-- Create backup strategy
-
-**Need Help?**
-- Check the main README.md
-- Open an issue on GitHub
-- Join our community discussions
-

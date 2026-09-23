@@ -1,20 +1,17 @@
-# AWS Configuration
+# AWS only runs the FastAPI Lambda and API Gateway. PostgreSQL lives in Supabase.
 aws_region  = "us-east-1"
 environment = "prod"
 
-# Spotify API Credentials
-# Get these from: https://developer.spotify.com/dashboard
-spotify_client_id     = "your_spotify_client_id_here"
-spotify_client_secret = "your_spotify_client_secret_here"
+spotify_client_id     = "your_spotify_client_id"
+spotify_client_secret = "your_spotify_client_secret"
+spotify_redirect_uri  = "https://your-api-id.execute-api.us-east-1.amazonaws.com/api/v1/auth/spotify/callback"
+lastfm_api_key        = "your_lastfm_api_key"
 
-# Last.fm API Key
-# Get this from: https://www.last.fm/api/account/create
-lastfm_api_key = "your_lastfm_api_key_here"
+# Supabase Dashboard → Connect → Transaction pooler. Keep sslmode=require.
+# Do not commit your real URL.
+database_url  = "postgresql://postgres.project-ref:password@aws-0-region.pooler.supabase.com:6543/postgres?sslmode=require"
+jwt_secret_key = "replace-with-a-long-random-secret"
 
-# Database Configuration (AWS RDS)
-# RDS will be created automatically by Terraform
-# Set a strong password (min 8 characters)
-db_username = "soundmatch_admin"
-db_password = "YourStrongPassword123!"  # CHANGE THIS!
-db_name     = "soundmatch"
-
+frontend_url = "https://your-project.vercel.app"
+# Add the production domain and any preview domain only when needed.
+cors_origins = "https://your-project.vercel.app"

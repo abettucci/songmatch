@@ -347,3 +347,129 @@ class SpotifyPlaylistGenreCreateResponse(BaseModel):
     playlist_url: str
     genre: str
     track_count: int = Field(ge=1)
+
+
+# ──────────────────────────────────────────────────────
+# Concert companions
+# ──────────────────────────────────────────────────────
+
+CompanionStatus = Literal["active", "withdrawn"]
+CompanionSwipeAction = Literal["pass", "interested"]
+ConcertStatus = Literal["scheduled", "cancelled", "completed"]
+ReportReason = Literal["safety", "harassment", "spam", "other"]
+
+
+class CompanionProfileUpsert(BaseModel):
+    display_name: str = Field(min_length=2, max_length=50)
+    bio: str = Field(default="", max_length=280)
+    city: str = Field(min_length=2, max_length=80)
+    public_interests: List[str] = Field(default_factory=list, max_length=5)
+    visible: bool = True
+    music_affinity_consent: bool = False
+    adult_confirmed: bool
+
+    @field_validator("display_name", "bio", "city")
+    @classmethod
+    def trim_profile_text(cls, value: str) -> str:
+        return " ".join(value.split())
+
+    @field_validator("public_interests")
+    @classmethod
+    def validate_interests(cls, values: List[str]) -> List[str]:
+        normalized = []
+        seen = set()
+        for value in values:
+            clean = " ".join(value.split())
+            key = clean.casefold()
+            if not clean or len(clean) > 80 or key in seen:
+                continue
+            seen.add(key)
+            normalized.append(clean)
+        if len(normalized) > 5:
+            raise ValueError("public_interests allows up to 5 unique items")
+        return normalized
+
+
+class CompanionProfileResponse(BaseModel):
+    user_id: UUID
+    display_name: str
+    bio: str
+    city: str
+    public_interests: List[str]
+    visible: bool
+    music_affinity_consent: bool
+    adult_confirmed: bool
+
+
+class ConcertCreate(BaseModel):
+    artist: str = Field(min_length=1, max_length=160)
+    venue: str = Field(min_length=1, max_length=160)
+    city: str = Field(min_length=2, max_length=80)
+    starts_at: datetime
+    status: ConcertStatus = "scheduled"
+
+    @field_validator("artist", "venue", "city")
+    @classmethod
+    def trim_concert_text(cls, value: str) -> str:
+        return " ".join(value.split())
+
+
+class ConcertResponse(BaseModel):
+    id: UUID
+    artist: str
+    venue: str
+    city: str
+    starts_at: datetime
+    status: ConcertStatus
+    attending: bool = False
+
+
+class AttendanceIntentRequest(BaseModel):
+    status: CompanionStatus
+
+
+class CompanionCandidateResponse(BaseModel):
+    user_id: UUID
+    display_name: str
+    bio: str
+    city: str
+    public_interests: List[str]
+    affinity_score: int = Field(ge=0, le=100)
+    affinity_level: Literal["alto", "medio", "bajo"]
+    affinity_reasons: List[str] = Field(max_length=3)
+
+
+class CompanionCandidatesResponse(BaseModel):
+    concert: ConcertResponse
+    candidates: List[CompanionCandidateResponse]
+
+
+class CompanionSwipeRequest(BaseModel):
+    target_user_id: UUID
+    action: CompanionSwipeAction
+
+
+class CompanionSwipeResponse(BaseModel):
+    matched: bool
+    match_id: Optional[UUID] = None
+
+
+class CompanionMatchResponse(BaseModel):
+    id: UUID
+    concert: ConcertResponse
+    companion: CompanionCandidateResponse
+    created_at: datetime
+
+
+class CompanionMatchesResponse(BaseModel):
+    matches: List[CompanionMatchResponse]
+
+
+class UserBlockRequest(BaseModel):
+    user_id: UUID
+
+
+class UserReportRequest(BaseModel):
+    user_id: UUID
+    reason: ReportReason
+    note: str = Field(default="", max_length=500)

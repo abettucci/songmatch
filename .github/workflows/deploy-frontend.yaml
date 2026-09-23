@@ -1,4 +1,4 @@
-name: Deploy Frontend to Netlify
+name: Verify Frontend for Vercel
 
 on:
   push:
@@ -8,12 +8,14 @@ on:
       - 'src/**'
       - 'public/**'
       - 'package.json'
+      - 'package-lock.json'
+      - 'frontend.env.example'
       - '.github/workflows/deploy-frontend.yaml'
   workflow_dispatch:
 
 jobs:
-  deploy:
-    name: Build and Deploy Frontend
+  verify:
+    name: Test and Build Frontend
     runs-on: ubuntu-latest
 
     steps:
@@ -29,31 +31,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Create .env file
+      - name: Create production environment file
         run: |
           echo "VITE_API_URL=${{ secrets.API_URL }}" > .env.production
+
+      - name: Run frontend tests
+        run: npm test -- --run
 
       - name: Build
         run: npm run build
         env:
           NODE_ENV: production
-
-      - name: Deploy to Netlify
-        uses: nwtgck/actions-netlify@v3.0
-        with:
-          publish-dir: './dist'
-          production-branch: main
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          deploy-message: "Deploy from GitHub Actions"
-          enable-pull-request-comment: true
-          enable-commit-comment: true
-          overwrites-pull-request-comment: true
-        env:
-          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
-          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
-
-      - name: Notify success
-        if: success()
-        run: |
-          echo "✅ Frontend deployed successfully!"
-

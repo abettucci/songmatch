@@ -1,6 +1,6 @@
 # Music Recommendation System
 
-A sophisticated music recommendation platform built with React, TypeScript, Python (FastAPI), and AWS Lambda, featuring multiple recommendation algorithms and **advanced structural audio analysis** based on academic research.
+A music recommendation platform built with React, TypeScript and Python (FastAPI), featuring multiple recommendation algorithms and **advanced structural audio analysis** based on academic research.
 
 ## Architecture Overview
 
@@ -194,13 +194,13 @@ El collaborative filtering (filtrado colaborativo) es una técnica que predice l
 
 - **Frontend**: React, TypeScript, Vite, Tailwind CSS, shadcn-ui
 - **Backend**: Python 3.11, FastAPI, Uvicorn, Mangum (Lambda adapter)
-- **Database**: PostgreSQL (Neon) with asyncpg/SQLAlchemy
+- **Database**: PostgreSQL (Supabase) with psycopg/SQLAlchemy
 - **Audio Processing**: librosa, numpy, scipy, scikit-learn
 - **Visualization**: matplotlib
 - **APIs**: Spotify Web API, Last.fm API
 - **Authentication**: JWT (python-jose, passlib)
 - **Infrastructure**: Terraform, GitHub Actions CI/CD, Docker
-- **Deployment**: AWS Lambda + Netlify
+- **Deployment**: Vercel (frontend) + AWS Lambda/API Gateway (API) + Supabase PostgreSQL
 
 ## API Endpoints
 
@@ -362,10 +362,9 @@ songmatch/
 
 ## Deployment
 
-The project uses GitHub Actions for automated deployment:
-- Push to `main` branch triggers automatic deployment
-- Backend deploys to AWS Lambda (via Mangum adapter)
-- Frontend deploys to Netlify
+The repository verifies the frontend and backend on GitHub Actions. Vercel deploys the frontend from its Git integration. The API is deployed manually with Terraform after reviewing the plan; it runs on AWS Lambda through Mangum and connects to Supabase PostgreSQL.
+
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for the supported Vercel + Supabase setup.
 
 ## References
 
@@ -375,4 +374,4 @@ The project uses GitHub Actions for automated deployment:
 
 ## Custom Domain
 
-Navigate to Netlify → Domain Settings to connect your custom domain.
+Connect a custom domain from the Vercel project settings and add its origin to `CORS_ORIGINS` before deploying the API configuration.
