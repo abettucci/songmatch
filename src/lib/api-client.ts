@@ -115,6 +115,24 @@ export interface CompanionMatch {
   created_at: string;
 }
 
+export type StemName = 'vocals' | 'drums' | 'bass' | 'other' | 'guitar' | 'piano'
+export type StemJobStatus = 'queued' | 'processing' | 'completed' | 'failed'
+
+export interface StemUploadGrant {
+  upload_url: string
+  fields: Record<string, string>
+  source_key: string
+}
+
+export interface StemJob {
+  id: string
+  source_type: 'spotify' | 'upload'
+  status: StemJobStatus
+  error_code?: string | null
+  expires_at: string
+  stems?: Record<StemName, string> | null
+}
+
 class APIClient {
   private baseURL: string;
   private token: string | null = null;
@@ -354,10 +372,36 @@ class APIClient {
     await this.request('/api/v1/companions/reports', { method: 'POST', body: JSON.stringify({ user_id: userId, reason, note }) });
   }
 
+  async createStemUpload(file: File): Promise<StemUploadGrant> {
+    return this.request<StemUploadGrant>('/api/v1/stems/uploads', {
+      method: 'POST',
+      body: JSON.stringify({ file_name: file.name, content_type: getStemContentType(file), size: file.size }),
+    })
+  }
+
+  async createStemJob(source: { source_type: 'spotify'; spotify_url: string } | { source_type: 'upload'; source_key: string }): Promise<StemJob> {
+    return this.request<StemJob>('/api/v1/stems/jobs', {
+      method: 'POST',
+      body: JSON.stringify(source),
+    })
+  }
+
+  async getStemJob(jobId: string): Promise<StemJob> {
+    return this.request<StemJob>(`/api/v1/stems/jobs/${encodeURIComponent(jobId)}`, { method: 'GET' })
+  }
+
   // Health check
   async healthCheck() {
     return this.request<{ status: string }>('/health', { method: 'GET' });
   }
+}
+
+function getStemContentType(file: File): string {
+  const extension = file.name.split('.').pop()?.toLowerCase()
+  if (extension === 'mp3') return 'audio/mpeg'
+  if (extension === 'wav') return 'audio/wav'
+  if (extension === 'm4a') return 'audio/mp4'
+  return file.type
 }
 
 // Export singleton instance

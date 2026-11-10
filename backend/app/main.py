@@ -20,6 +20,7 @@ from app.services.deezer import deezer_client
 from app.services.cyanite import cyanite_client
 from app.services.clap_embeddings import clap_service
 from app.api.routes import router
+from app.api.stems import router as stems_router
 from app.api.middleware import (
     RateLimitMiddleware,
     SecurityHeadersMiddleware,
@@ -81,6 +82,7 @@ app.add_middleware(
 app.add_middleware(RequestLoggingMiddleware)
 
 app.include_router(router)
+app.include_router(stems_router)
 
 
 @app.get("/")

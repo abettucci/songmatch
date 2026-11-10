@@ -193,3 +193,20 @@ CREATE TRIGGER update_user_profiles_updated_at BEFORE UPDATE ON user_profiles FO
 CREATE TRIGGER update_concerts_updated_at BEFORE UPDATE ON concerts FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_concert_attendance_updated_at BEFORE UPDATE ON concert_attendance_intents FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_companion_swipes_updated_at BEFORE UPDATE ON companion_swipes FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Temporary AI Stem Mixer jobs. Audio objects themselves live in private S3.
+CREATE TABLE IF NOT EXISTS stem_jobs (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    source_type VARCHAR(20) NOT NULL CHECK (source_type IN ('spotify', 'upload')),
+    source_key TEXT,
+    status_key TEXT NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'processing', 'completed', 'failed')),
+    output_keys JSONB NOT NULL DEFAULT '{}'::jsonb,
+    error_code VARCHAR(40),
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_stem_jobs_user_created ON stem_jobs(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_stem_jobs_expiry ON stem_jobs(expires_at);

@@ -15,3 +15,7 @@ jwt_secret_key = "replace-with-a-long-random-secret"
 frontend_url = "https://your-project.vercel.app"
 # Add the production domain and any preview domain only when needed.
 cors_origins = "https://your-project.vercel.app"
+
+# Deploy the Modal worker, then set these values and apply Terraform again.
+modal_stem_endpoint = ""
+modal_stem_token    = ""

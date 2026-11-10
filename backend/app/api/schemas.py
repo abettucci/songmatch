@@ -9,10 +9,11 @@ Key fixes vs previous version:
 - AudioFeaturesRequest uses preview_urls (librosa-based, not Spotify deprecated endpoint)
 """
 
-from pydantic import BaseModel, EmailStr, Field, ConfigDict, field_validator
+from pydantic import BaseModel, EmailStr, Field, ConfigDict, field_validator, model_validator
 from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime
 from uuid import UUID
+from pathlib import PurePath
 
 
 # ──────────────────────────────────────────────────────
@@ -473,3 +474,99 @@ class UserReportRequest(BaseModel):
     user_id: UUID
     reason: ReportReason
     note: str = Field(default="", max_length=500)
+
+
+# ──────────────────────────────────────────────────────
+# AI Stem Mixer
+# ──────────────────────────────────────────────────────
+
+StemName = Literal["vocals", "drums", "bass", "other", "guitar", "piano"]
+StemJobStatus = Literal["queued", "processing", "completed", "failed"]
+STEM_UPLOAD_MAX_BYTES = 100 * 1024 * 1024
+STEM_CONTENT_TYPES = frozenset({"audio/mpeg", "audio/wav", "audio/x-wav", "audio/mp4"})
+
+
+class StemUploadRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    file_name: str = Field(min_length=1, max_length=255)
+    content_type: str
+    size: int = Field(ge=1, le=STEM_UPLOAD_MAX_BYTES)
+
+    @field_validator("file_name")
+    @classmethod
+    def validate_audio_file_name(cls, value: str) -> str:
+        if PurePath(value).name != value or "/" in value or "\\" in value:
+            raise ValueError("Invalid file name")
+        if PurePath(value).suffix.casefold() not in {".mp3", ".wav", ".m4a"}:
+            raise ValueError("Unsupported audio extension")
+        return value
+
+    @field_validator("content_type")
+    @classmethod
+    def validate_audio_content_type(cls, value: str) -> str:
+        if value not in STEM_CONTENT_TYPES:
+            raise ValueError("Unsupported audio content type")
+        return value
+
+    @model_validator(mode="after")
+    def validate_audio_type_matches_extension(self):
+        extension = PurePath(self.file_name).suffix.casefold()
+        expected = {
+            ".mp3": {"audio/mpeg"},
+            ".wav": {"audio/wav", "audio/x-wav"},
+            ".m4a": {"audio/mp4"},
+        }
+        if self.content_type not in expected.get(extension, set()):
+            raise ValueError("Audio extension and content type do not match")
+        return self
+
+
+class StemJobCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_type: Literal["spotify", "upload"]
+    spotify_url: Optional[str] = Field(default=None, max_length=2048)
+    source_key: Optional[str] = Field(default=None, max_length=512)
+
+    @field_validator("spotify_url")
+    @classmethod
+    def validate_spotify_track_url(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        from urllib.parse import urlparse
+        import re
+
+        parsed = urlparse(value)
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname != "open.spotify.com"
+            or parsed.username
+            or parsed.password
+            or not re.fullmatch(r"/track/[A-Za-z0-9]{22}/?", parsed.path)
+        ):
+            raise ValueError("Provide a Spotify track link")
+        return value
+
+    @model_validator(mode="after")
+    def validate_source_selection(self):
+        if self.source_type == "spotify" and (not self.spotify_url or self.source_key):
+            raise ValueError("A Spotify job requires only spotify_url")
+        if self.source_type == "upload" and (not self.source_key or self.spotify_url):
+            raise ValueError("An upload job requires only source_key")
+        return self
+
+
+class StemUploadResponse(BaseModel):
+    upload_url: str
+    fields: Dict[str, str]
+    source_key: str
+
+
+class StemJobResponse(BaseModel):
+    id: UUID
+    source_type: Literal["spotify", "upload"]
+    status: StemJobStatus
+    error_code: Optional[str] = None
+    expires_at: datetime
+    stems: Optional[Dict[StemName, str]] = None

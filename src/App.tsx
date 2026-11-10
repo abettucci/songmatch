@@ -3,6 +3,7 @@ import { useAuth } from "@/hooks/useAuth";
 import Dashboard from "./pages/Dashboard";
 import Auth from "./pages/Auth";
 import Companions from "./pages/Companions";
+import StemMixer from "./pages/StemMixer";
 import { Loader2 } from "lucide-react";
 
 const App = () => {
@@ -27,6 +28,7 @@ const App = () => {
         element={!user ? <Auth /> : <Navigate to="/" replace />} 
       />
       <Route path="/companions" element={user ? <Companions /> : <Navigate to="/auth" replace />} />
+      <Route path="/stem-mixer" element={user ? <StemMixer /> : <Navigate to="/auth" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

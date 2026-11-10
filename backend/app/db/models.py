@@ -41,6 +41,31 @@ class Playlist(Base):
     user = relationship("User", back_populates="playlists")
 
 
+class StemJob(Base):
+    """Short-lived audio separation job and its private S3 artifact keys."""
+
+    __tablename__ = "stem_jobs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    source_type = Column(String(20), nullable=False)
+    source_key = Column(Text, nullable=True)
+    status_key = Column(Text, nullable=False)
+    status = Column(String(20), nullable=False, default="queued")
+    output_keys = Column(JSON, nullable=False, default=dict)
+    error_code = Column(String(40), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("source_type IN ('spotify', 'upload')", name="ck_stem_jobs_source_type"),
+        CheckConstraint("status IN ('queued', 'processing', 'completed', 'failed')", name="ck_stem_jobs_status"),
+        Index("idx_stem_jobs_user_created", "user_id", "created_at"),
+        Index("idx_stem_jobs_expiry", "expires_at"),
+    )
+
+
 class RecommendationHistory(Base):
     __tablename__ = "recommendation_history"
 

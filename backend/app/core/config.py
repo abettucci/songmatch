@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     # Spotify OAuth redirect URI
     spotify_redirect_uri: str = "http://localhost:8080/api/v1/auth/spotify/callback"
 
+    # Temporary storage and asynchronous AI stem worker
+    aws_region: str = "us-east-1"
+    stem_artifacts_bucket: str = ""
+    modal_stem_endpoint: str = ""
+    modal_stem_token: str = ""
+
     # Frontend URL (used for OAuth redirects after Spotify callback)
     frontend_url: str = "http://localhost:5173"
 

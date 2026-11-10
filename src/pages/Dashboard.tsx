@@ -24,7 +24,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { useToast } from '@/hooks/use-toast'
 import { apiClient, type SpotifyPlaylistGenreCreation, type SpotifyPlaylistGenrePreview, type SpotifyPlaylistGenreTrack } from '@/lib/api-client'
-import { Loader2, LogOut, Music, X, Sparkles, Link, Link2Off, ListMusic, ChevronDown, ExternalLink } from 'lucide-react'
+import { Loader2, LogOut, Music, X, Sparkles, Link, Link2Off, ListMusic, ChevronDown, ExternalLink, SlidersHorizontal } from 'lucide-react'
 import { Link as RouterLink } from 'react-router-dom'
 
 interface Song {
@@ -416,6 +416,9 @@ export default function Dashboard() {
               </Button>
               <Button asChild variant="outline" size="sm" className="hidden md:inline-flex border-rose-400/40 text-rose-500 hover:bg-rose-500/10">
                 <RouterLink to="/companions">Busco segunda</RouterLink>
+              </Button>
+              <Button asChild variant="outline" size="sm" className="hidden sm:inline-flex border-primary/40 text-primary hover:bg-primary/10">
+                <RouterLink to="/stem-mixer"><SlidersHorizontal className="mr-2 h-4 w-4" />AI Stem Mixer</RouterLink>
               </Button>
             </div>
           </div>

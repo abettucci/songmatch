@@ -85,6 +85,87 @@ variable "cors_origins" {
   type        = string
 }
 
+variable "modal_stem_endpoint" {
+  description = "Authenticated Modal HTTP endpoint used to dispatch stem jobs"
+  type        = string
+  default     = ""
+}
+
+variable "modal_stem_token" {
+  description = "Bearer token shared by Songmatch API and the Modal job dispatcher"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+data "aws_caller_identity" "current" {}
+
+resource "aws_s3_bucket" "stem_artifacts" {
+  bucket = "${var.project_name}-stems-${data.aws_caller_identity.current.account_id}-${var.aws_region}"
+  tags = {
+    Name        = "${var.project_name}-stem-artifacts"
+    Environment = var.environment
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "stem_artifacts" {
+  bucket                  = aws_s3_bucket.stem_artifacts.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "stem_artifacts" {
+  bucket = aws_s3_bucket.stem_artifacts.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "stem_artifacts" {
+  bucket = aws_s3_bucket.stem_artifacts.id
+
+  rule {
+    id     = "expire-temporary-stem-files"
+    status = "Enabled"
+    filter {
+      prefix = "stem-artifacts/"
+    }
+    expiration {
+      days = 1
+    }
+  }
+}
+
+resource "aws_s3_bucket_cors_configuration" "stem_artifacts" {
+  bucket = aws_s3_bucket.stem_artifacts.id
+
+  cors_rule {
+    allowed_origins = [for origin in split(",", var.cors_origins) : trimspace(origin)]
+    allowed_methods = ["GET", "HEAD", "POST"]
+    allowed_headers = ["Content-Type", "Range"]
+    expose_headers  = ["Accept-Ranges", "Content-Length", "Content-Range", "Content-Type", "ETag"]
+    max_age_seconds = 3600
+  }
+}
+
+resource "aws_iam_role_policy" "stem_artifacts" {
+  name = "${var.project_name}-stem-artifacts-${var.environment}"
+  role = aws_iam_role.lambda_role.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["s3:GetObject", "s3:PutObject"]
+      Resource = "${aws_s3_bucket.stem_artifacts.arn}/stem-artifacts/*"
+    }]
+  })
+}
+
 resource "aws_iam_role" "lambda_role" {
   name = "${var.project_name}-lambda-role-${var.environment}"
 
@@ -126,6 +207,9 @@ resource "aws_lambda_function" "api" {
       FRONTEND_URL          = var.frontend_url
       CORS_ORIGINS          = var.cors_origins
       ENVIRONMENT           = var.environment
+      STEM_ARTIFACTS_BUCKET  = aws_s3_bucket.stem_artifacts.bucket
+      MODAL_STEM_ENDPOINT    = var.modal_stem_endpoint
+      MODAL_STEM_TOKEN       = var.modal_stem_token
     }
   }
 
@@ -206,4 +290,14 @@ output "api_endpoint" {
 output "lambda_function_name" {
   description = "Lambda function name"
   value       = aws_lambda_function.api.function_name
+}
+
+output "stem_artifacts_bucket" {
+  description = "Private bucket for temporary uploaded audio and generated stems"
+  value       = aws_s3_bucket.stem_artifacts.bucket
+}
+
+output "stem_artifacts_host" {
+  description = "Public hostname used by the browser for signed audio URLs"
+  value       = aws_s3_bucket.stem_artifacts.bucket_regional_domain_name
 }
