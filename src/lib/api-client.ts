@@ -65,6 +65,30 @@ export interface SpotifyLikedTracksGenreGroup {
   tracks: SpotifyTrackLiked[];
 }
 
+export interface SpotifyPlaylistSuggestion {
+  playlist_id: string;
+  playlist_name: string;
+  score: number;
+  reasons: string[];
+}
+
+export interface SpotifyLikedTrackSuggestion {
+  track: SpotifyTrackLiked;
+  suggestions: SpotifyPlaylistSuggestion[];
+}
+
+export interface SpotifyLikedPlaylistSuggestionsResponse {
+  items: SpotifyLikedTrackSuggestion[];
+  playlists_checked: number;
+}
+
+export interface SpotifyLikedPlaylistCreateResponse {
+  playlist_id: string;
+  playlist_name: string;
+  playlist_url: string;
+  track_count: number;
+}
+
 export interface SpotifyListeningHistoryGenreGroup {
   name: string;
   tracks: SpotifyTrackPlayed[];
@@ -323,6 +347,20 @@ class APIClient {
       `/api/v1/spotify/liked-tracks?limit=${limit}`,
       { method: 'GET' },
     );
+  }
+
+  async getSpotifyLikedPlaylistSuggestions(limit: number = 20): Promise<SpotifyLikedPlaylistSuggestionsResponse> {
+    return this.request<SpotifyLikedPlaylistSuggestionsResponse>(
+      `/api/v1/spotify/liked-tracks/playlist-suggestions?limit=${limit}`,
+      { method: 'GET' },
+    );
+  }
+
+  async createSpotifyLikedPlaylist(limit: number = 20): Promise<SpotifyLikedPlaylistCreateResponse> {
+    return this.request<SpotifyLikedPlaylistCreateResponse>('/api/v1/spotify/liked-tracks/playlist', {
+      method: 'POST',
+      body: JSON.stringify({ limit }),
+    });
   }
 
   async getSpotifyListeningHistory(days: number = 7): Promise<{ days: SpotifyListeningHistoryDay[] }> {
