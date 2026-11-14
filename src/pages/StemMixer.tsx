@@ -59,6 +59,8 @@ function StemPlayer({ job }: { job: StemJob }) {
   const [duration, setDuration] = useState(0)
   const [volumes, setVolumes] = useState<Record<StemName, number>>({ vocals: 100, drums: 100, bass: 100, other: 100, guitar: 100, piano: 100 })
   const [semitones, setSemitones] = useState(0)
+  const [masterVolume, setMasterVolume] = useState(100)
+  const masterGainRef = useRef<GainNode | null>(null)
   const [audioError, setAudioError] = useState('')
 
   useEffect(() => {
@@ -87,7 +89,11 @@ function StemPlayer({ job }: { job: StemJob }) {
         const pitchControl = pitchShifter.parameters.get('pitchSemitones')
         if (!pitchControl) throw new Error('El procesador de tono no está disponible.')
         pitchControl.value = semitones
-        pitchShifter.connect(limiter)
+        const masterGain = context.createGain()
+        masterGain.gain.value = masterVolume / 100
+        pitchShifter.connect(masterGain)
+        masterGain.connect(limiter)
+        masterGainRef.current = masterGain
 
         for (const stem of STEMS) {
           const signedUrl = job.stems?.[stem.id]
@@ -144,6 +150,8 @@ function StemPlayer({ job }: { job: StemJob }) {
       channelsRef.current.clear()
       shifterRef.current?.disconnect()
       shifterRef.current = null
+      masterGainRef.current?.disconnect()
+      masterGainRef.current = null
       if (context.state !== 'closed') void context.close()
       contextRef.current = null
     }
@@ -178,6 +186,12 @@ function StemPlayer({ job }: { job: StemJob }) {
     setVolumes((current) => ({ ...current, [stem]: volume }))
     const channel = channelsRef.current.get(stem)
     if (channel) channel.gain.gain.setTargetAtTime(volume / 100, contextRef.current?.currentTime ?? 0, 0.02)
+  }
+
+  const changeMasterVolume = (value: number[]) => {
+    const volume = value[0] ?? 100
+    setMasterVolume(volume)
+    masterGainRef.current?.gain.setTargetAtTime(volume / 100, contextRef.current?.currentTime ?? 0, 0.02)
   }
 
   const changeSemitones = (value: number[]) => {
@@ -221,6 +235,26 @@ function StemPlayer({ job }: { job: StemJob }) {
             </div>
           </div>
           {audioError && <p role="alert" className="mt-4 text-sm text-rose-300">{audioError}</p>}
+        </CardContent>
+      </Card>
+
+      <Card className="border-white/10 bg-slate-900/80 text-white">
+        <CardContent className="flex items-center gap-4 p-5">
+          <div className="flex min-w-0 flex-1 items-center gap-3">
+            <Volume2 className="h-4 w-4 shrink-0 text-lime-300" />
+            <div className="min-w-0"><h3 className="font-semibold">Volumen master</h3><p className="text-xs text-slate-500">Escala los seis stems juntos, sin cambiar sus niveles</p></div>
+          </div>
+          <span className="rounded-full border border-white/10 px-2 py-1 text-[10px] tabular-nums text-slate-400">{masterVolume}%</span>
+          <Slider
+            aria-label="Volumen master"
+            min={0}
+            max={100}
+            step={1}
+            value={[masterVolume]}
+            onValueChange={changeMasterVolume}
+            disabled={!ready}
+            className="w-40 sm:w-64"
+          />
         </CardContent>
       </Card>
 
