@@ -3,8 +3,14 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
-import { Heart, ChevronDown, ListMusic, RefreshCw } from 'lucide-react'
-import { apiClient, type SpotifyLikedTracksGenreGroup, type SpotifyTrackLiked } from '@/lib/api-client'
+import { Heart, ChevronDown, ListMusic, ListPlus, RefreshCw, Sparkles } from 'lucide-react'
+import {
+  apiClient,
+  type SpotifyLikedPlaylistCreateResponse,
+  type SpotifyLikedTrackSuggestion,
+  type SpotifyLikedTracksGenreGroup,
+  type SpotifyTrackLiked,
+} from '@/lib/api-client'
 import { TrackRow } from '@/components/TrackRow'
 
 function formatAddedAt(addedAt: string): string {
@@ -16,6 +22,11 @@ export function LikedTracksPlaylist() {
   const [genres, setGenres] = useState<SpotifyLikedTracksGenreGroup[]>([])
   const [loading, setLoading] = useState(true)
   const [openGenres, setOpenGenres] = useState<Set<string>>(new Set())
+  const [suggestions, setSuggestions] = useState<SpotifyLikedTrackSuggestion[] | null>(null)
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false)
+  const [creating, setCreating] = useState(false)
+  const [createdPlaylist, setCreatedPlaylist] = useState<SpotifyLikedPlaylistCreateResponse | null>(null)
+  const [actionError, setActionError] = useState('')
 
   const loadPlaylist = async () => {
     setLoading(true)
@@ -41,6 +52,32 @@ export function LikedTracksPlaylist() {
     [genres],
   )
 
+  const loadSuggestions = async () => {
+    setSuggestionsLoading(true)
+    setActionError('')
+    try {
+      const response = await apiClient.getSpotifyLikedPlaylistSuggestions(20)
+      setSuggestions(response.items)
+    } catch {
+      setSuggestions(null)
+      setActionError('No pudimos buscar sugerencias de playlist. Probá de nuevo en unos minutos.')
+    } finally {
+      setSuggestionsLoading(false)
+    }
+  }
+
+  const createPlaylist = async () => {
+    setCreating(true)
+    setActionError('')
+    try {
+      setCreatedPlaylist(await apiClient.createSpotifyLikedPlaylist(20))
+    } catch {
+      setActionError('No pudimos crear la playlist en Spotify.')
+    } finally {
+      setCreating(false)
+    }
+  }
+
   const toggleGenre = (genre: string) => {
     setOpenGenres((previous) => {
       const next = new Set(previous)
@@ -65,6 +102,23 @@ export function LikedTracksPlaylist() {
             <p className="text-sm text-muted-foreground">
               Tus 20 canciones guardadas más recientes, organizadas acá mismo.
             </p>
+            {!loading && tracks.length > 0 && (
+              <div className="flex flex-wrap gap-2 pt-1">
+                <Button size="sm" variant="outline" onClick={createPlaylist} disabled={creating}>
+                  <ListPlus className="mr-1.5 h-4 w-4" /> {creating ? 'Creando…' : 'Crear playlist con estos likes'}
+                </Button>
+                <Button size="sm" variant="outline" onClick={loadSuggestions} disabled={suggestionsLoading}>
+                  <Sparkles className="mr-1.5 h-4 w-4" /> {suggestionsLoading ? 'Buscando…' : 'Sugerir playlist para cada uno'}
+                </Button>
+              </div>
+            )}
+            {createdPlaylist && (
+              <p className="text-sm text-emerald-600 dark:text-emerald-300">
+                Playlist creada con {createdPlaylist.track_count} canciones.{' '}
+                <a href={createdPlaylist.playlist_url} target="_blank" rel="noreferrer" className="underline">Abrir en Spotify</a>
+              </p>
+            )}
+            {actionError && <p role="alert" className="text-sm text-rose-500">{actionError}</p>}
           </div>
           <Button variant="ghost" size="icon" onClick={loadPlaylist} disabled={loading} aria-label="Actualizar canciones liked">
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
@@ -113,6 +167,27 @@ export function LikedTracksPlaylist() {
                 </Collapsible>
               )
             })}
+          </div>
+        )}
+        {suggestions && tracks.length > 0 && (
+          <div className="mt-5 space-y-2">
+            <p className="text-sm font-semibold">Dónde podrían ir</p>
+            {suggestions.filter((item) => item.suggestions.length > 0).length === 0 ? (
+              <p className="text-sm text-muted-foreground">No encontramos playlists tuyas que coincidan con estos likes.</p>
+            ) : (
+              suggestions.map((item) => item.suggestions.length > 0 && (
+                <div key={item.track.spotify_id} className="rounded-xl border border-border/50 bg-background/35 px-3.5 py-3">
+                  <p className="truncate text-sm font-medium">{item.track.name} <span className="text-muted-foreground">· {item.track.artist}</span></p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {item.suggestions.map((suggestion) => (
+                      <Badge key={suggestion.playlist_id} variant="secondary" title={suggestion.reasons.join(' · ')}>
+                        {suggestion.playlist_name}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         )}
       </CardContent>

@@ -270,6 +270,34 @@ class SpotifyLikedTracksResponse(BaseModel):
     genres: List[SpotifyLikedTracksGenreGroup]
 
 
+class SpotifyLikedPlaylistCreateRequest(BaseModel):
+    limit: int = Field(20, ge=1, le=50)
+
+
+class SpotifyLikedPlaylistCreateResponse(BaseModel):
+    playlist_id: str
+    playlist_name: str
+    playlist_url: str
+    track_count: int = Field(ge=1)
+
+
+class SpotifyPlaylistSuggestion(BaseModel):
+    playlist_id: str
+    playlist_name: str
+    score: int = Field(ge=1)
+    reasons: List[str]
+
+
+class SpotifyLikedTrackSuggestion(BaseModel):
+    track: TrackWithAddedAt
+    suggestions: List[SpotifyPlaylistSuggestion]
+
+
+class SpotifyLikedPlaylistSuggestionsResponse(BaseModel):
+    items: List[SpotifyLikedTrackSuggestion]
+    playlists_checked: int = Field(ge=0)
+
+
 class SpotifyListeningHistoryGenreGroup(BaseModel):
     name: str
     tracks: List[TrackWithPlayedAt]

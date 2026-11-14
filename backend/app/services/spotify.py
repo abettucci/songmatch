@@ -416,8 +416,8 @@ class SpotifyClient:
     ) -> List[Dict[str, Any]]:
         """Return the user's most recently saved tracks, newest first.
 
-        This is deliberately a read-only call: SoundMatch presents the result
-        as an in-app playlist and never creates or changes a Spotify playlist.
+        This call only reads. Writing a playlist from these tracks is a separate,
+        explicit action (see `create_private_playlist`).
         """
         client = await self._get_client()
         response = await client.get(
@@ -436,6 +436,26 @@ class SpotifyClient:
             }
             for item in response.json().get("items", [])
             if item.get("track") and item["track"].get("id") and item.get("added_at")
+        ]
+
+    async def get_user_owned_playlists(
+        self, access_token: str, limit: int = 20
+    ) -> List[Dict[str, Any]]:
+        """Return the playlists the connected user owns, so they can be written to."""
+        me = await self._user_request("GET", "/me", access_token)
+        me_id = me.get("id")
+        if not me_id:
+            return []
+        data = await self._user_request(
+            "GET",
+            "/me/playlists",
+            access_token,
+            params={"limit": min(limit, 50), "offset": 0},
+        )
+        return [
+            {"id": item["id"], "name": item.get("name") or "Sin nombre"}
+            for item in data.get("items", [])
+            if item and item.get("id") and (item.get("owner") or {}).get("id") == me_id
         ]
 
     async def _user_request(

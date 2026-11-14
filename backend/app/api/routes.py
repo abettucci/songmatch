@@ -34,6 +34,7 @@ from app.core.config import get_settings
 from app.services.spotify import SpotifyAPIError, spotify_client
 from app.services.spotify_tokens import get_valid_access_token
 from app.services.companions import music_affinity_service
+from app.services.playlist_suggestions import build_playlist_profile, rank_playlists_for_track
 from app.services.recommendations import recommendation_engine
 from app.services.audio_analysis import audio_analyzer
 from app.services.audio_features import audio_extractor
@@ -53,6 +54,8 @@ from app.api.schemas import (
     SpotifyPlaylistGenreTrackGroup,
     TrackWithPlayedAt, SpotifyRecentlyPlayedResponse,
     TrackWithAddedAt, SpotifyLikedTracksGenreGroup, SpotifyLikedTracksResponse,
+    SpotifyLikedPlaylistCreateRequest, SpotifyLikedPlaylistCreateResponse,
+    SpotifyLikedTrackSuggestion, SpotifyLikedPlaylistSuggestionsResponse, SpotifyPlaylistSuggestion,
     SpotifyListeningHistoryGenreGroup, SpotifyListeningHistoryDay,
     SpotifyListeningHistoryResponse,
     CompanionProfileUpsert, CompanionProfileResponse, ConcertCreate, ConcertResponse,
@@ -540,6 +543,100 @@ async def spotify_liked_tracks(
             SpotifyLikedTracksGenreGroup(name=name, tracks=group_tracks)
             for name, group_tracks in sorted(groups.items(), key=lambda item: (-len(item[1]), item[0].casefold()))
         ],
+    )
+
+
+@router.get(
+    "/api/v1/spotify/liked-tracks/playlist-suggestions",
+    response_model=SpotifyLikedPlaylistSuggestionsResponse,
+)
+async def suggest_playlists_for_liked_tracks(
+    limit: int = Query(20, ge=1, le=50),
+    playlists: int = Query(10, ge=1, le=20),
+    user_id: str = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """Suggest which of the user's own playlists each recent liked track fits in.
+
+    Read-only: nothing is written to Spotify. A playlist that cannot be read is skipped.
+    """
+    access_token = await _get_spotify_access_token_for_user(user_id, db)
+    try:
+        saved = await spotify_client.get_user_saved_tracks(access_token, limit=limit)
+        owned = await spotify_client.get_user_owned_playlists(access_token, limit=playlists)
+        genres_by_track = await spotify_client.genres_for_tracks(saved)
+        profiles = []
+        for playlist in owned:
+            try:
+                analysis = await spotify_client.analyze_playlist_genres(access_token, playlist["id"])
+            except SpotifyAPIError as error:
+                logger.warning("Skipping playlist %s for suggestions: %s", playlist["id"], error.status_code)
+                continue
+            profiles.append({
+                "playlist_id": playlist["id"],
+                "playlist_name": playlist["name"],
+                "profile": build_playlist_profile(analysis["tracks"], analysis["genres_by_artist"]),
+            })
+    except SpotifyAPIError as error:
+        raise _spotify_error_to_http(error)
+
+    items = [
+        SpotifyLikedTrackSuggestion(
+            track=TrackWithAddedAt(**track),
+            suggestions=[
+                SpotifyPlaylistSuggestion(**suggestion)
+                for suggestion in rank_playlists_for_track(
+                    track, genres_by_track.get(track["spotify_id"], []), profiles
+                )
+            ],
+        )
+        for track in saved
+    ]
+    return SpotifyLikedPlaylistSuggestionsResponse(items=items, playlists_checked=len(profiles))
+
+
+@router.post(
+    "/api/v1/spotify/liked-tracks/playlist",
+    response_model=SpotifyLikedPlaylistCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_playlist_from_liked_tracks(
+    request: SpotifyLikedPlaylistCreateRequest,
+    user_id: str = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a private playlist with the latest liked tracks.
+
+    Runs only when the user clicks the button; it never runs in the background.
+    """
+    access_token = await _get_spotify_access_token_for_user(user_id, db)
+    try:
+        saved = await spotify_client.get_user_saved_tracks(access_token, limit=request.limit)
+    except SpotifyAPIError as error:
+        raise _spotify_error_to_http(error)
+
+    uris = [track["uri"] for track in saved if track.get("uri")]
+    if not uris:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No liked tracks to add")
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    playlist_name = f"Últimos likes {today}"
+    try:
+        created = await spotify_client.create_private_playlist(
+            access_token,
+            playlist_name,
+            "Created by SoundMatch from your latest liked songs.",
+        )
+        await spotify_client.add_playlist_tracks(access_token, created["id"], uris)
+    except SpotifyAPIError as error:
+        raise _spotify_error_to_http(error)
+
+    playlist_id = created["id"]
+    return SpotifyLikedPlaylistCreateResponse(
+        playlist_id=playlist_id,
+        playlist_name=playlist_name,
+        playlist_url=(created.get("external_urls") or {}).get("spotify") or f"https://open.spotify.com/playlist/{playlist_id}",
+        track_count=len(uris),
     )
 
 
