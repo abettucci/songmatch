@@ -8,7 +8,7 @@ import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Info, Settings } from 'lucide-react'
+import { Check, Info, Settings } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface PreferencesType {
@@ -351,29 +351,35 @@ export function RecommendationSettings({ preferences, onPreferencesChange }: Rec
                 ¿Cómo funciona?
               </Button>
             </div>
-            <Select value={currentAlgorithm} onValueChange={(value) => updatePreference('algorithm', value as AlgorithmKey)}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select algorithm" />
-              </SelectTrigger>
-              <SelectContent>
-                {ALGORITHM_ORDER.map((key) => {
-                  const info = ALGORITHMS[key]
-                  return (
-                    <SelectItem key={key} value={key}>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <div className="flex flex-col">
-                            <span>{info.label}</span>
-                            <span className="text-xs text-muted-foreground">{info.short}</span>
-                          </div>
-                        </TooltipTrigger>
-                        <TooltipContent side="right" className="max-w-xs text-sm leading-snug">{info.detail}</TooltipContent>
-                      </Tooltip>
-                    </SelectItem>
-                  )
-                })}
-              </SelectContent>
-            </Select>
+            <div role="radiogroup" aria-label="Recommendation Algorithm" className="space-y-2">
+              {ALGORITHM_ORDER.map((key) => {
+                const info = ALGORITHMS[key]
+                const selected = key === currentAlgorithm
+                return (
+                  <Tooltip key={key}>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        role="radio"
+                        aria-checked={selected}
+                        onClick={() => updatePreference('algorithm', key)}
+                        className={cn(
+                          'flex w-full items-start justify-between gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors',
+                          selected ? 'border-primary bg-primary/10' : 'border-border/60 bg-background hover:bg-muted/60',
+                        )}
+                      >
+                        <span className="min-w-0">
+                          <span className="block text-sm font-medium">{info.label}</span>
+                          <span className="block text-xs text-muted-foreground">{info.short}</span>
+                        </span>
+                        {selected && <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden="true" />}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="max-w-xs text-sm leading-snug">{info.detail}</TooltipContent>
+                  </Tooltip>
+                )
+              })}
+            </div>
             <div className="text-xs text-muted-foreground">
               {currentAlgorithm === 'custom'
                 ? 'Content-based filtering using librosa audio features (energy, valence, tempo, MFCCs, chroma). Requires preview URLs.'
